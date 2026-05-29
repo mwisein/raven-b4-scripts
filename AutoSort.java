@@ -1,5 +1,5 @@
 String[] slotOptions = {
-    "Disabled","1","2","3","4","5","6","7","8","9"
+    util.color("&cDisabled"),"1","2","3","4","5","6","7","8","9"
 };
  
 String[] managedNames = {
@@ -34,8 +34,6 @@ void onLoad() {
  
     for (int i = 0; i < managedNames.length; i++)
         modules.registerSlider(managedNames[i], "", 0, slotOptions);
-
-    modules.registerButton("Sort comfy pillow", false);
 }
  
 void onEnable()  { reset(); }
@@ -266,9 +264,6 @@ boolean canMergeInto(ItemStack target, ItemStack src, boolean bwOnly) {
  
 void runAutoSort() {
     boolean overrideTools = modules.getButton(scriptName, "Override tools");
-    if (modules.getButton(scriptName, "Sort comfy pillow")) {
-        sortComfyPillowsToInventory();
-    }
  
     for (int hSlot = 0; hSlot < 9; hSlot++) {
         String cat = desiredSlots[hSlot];
@@ -294,14 +289,6 @@ void runAutoSort() {
     }
 }
 
-void sortComfyPillowsToInventory() {
-    for (int hSlot = 0; hSlot < 9; hSlot++) {
-        ItemStack stack = inventory.getStackInSlot(hSlot);
-        if (isComfyPillowSkull(stack)) {
-            inventory.click(toContainerSlot(hSlot), 0, 1);
-        }
-    }
-}
  
 void swapToHotbar(int srcPlayerSlot, int targetHotbarIndex) {
     if (srcPlayerSlot == targetHotbarIndex && srcPlayerSlot < 9) return;
@@ -379,11 +366,6 @@ boolean isBow(ItemStack s)       { if (s==null||s.name==null) return false; Stri
 boolean isStick(ItemStack s)     { if (s==null||s.name==null) return false; String n=s.name.toLowerCase(); return n.equals("stick")||n.equals("minecraft:stick"); }
 boolean isLadder(ItemStack s)    { if (s==null||s.name==null) return false; String n=s.name.toLowerCase(); return n.equals("ladder")||n.equals("minecraft:ladder"); }
 
-boolean isComfyPillowSkull(ItemStack s) {
-    if (s == null || s.name == null) return false;
-    String blob = util.strip(s.name).toLowerCase();
-    return blob.contains("skull");
-}
  
 boolean isBedWarsStackable(ItemStack s) {
     if (s == null || s.name == null) return false;
