@@ -10,7 +10,7 @@ String[] settingsThemeMap = {
 };
 
 String[] rmbOptions = {
-    "Disabled","Always","5 ticks","10 ticks"
+    "Disabled","Always","5 tick delay","10 tick delay"
 };
 
 int defaultHudOffsetX = 0;
@@ -34,13 +34,18 @@ long resetButtonDelayMs = 50L;
 long rightHoldStartMs = 0L;
 boolean prevRight = false;
 
+boolean lastScaffoldState = false;
+boolean wasShowingReal = false;
+long switchFadeUntil = 0L;
+long switchFadeMs = 110L;
+
 void onLoad() {
+    modules.registerDescription("Displays block count.");
+    modules.registerButton("Scaffold only", false);
     modules.registerSlider("Theme", "", 0, themeOptions);
     modules.registerSlider("Scale", "x", 1.0, 0.5, 3.0, 0.1);
-    modules.registerSlider("Time multiplier", "x", 1.0, 0.1, 4.0, 0.1);
     modules.registerSlider("Only on RMB", "", 0, rmbOptions);
     modules.registerButton("Reset Position", false);
-    modules.registerButton("Scaffold only", false);
     loadPos();
 }
 
@@ -55,6 +60,9 @@ void onEnable() {
     resetPending = false;
     resetStartedMs = 0L;
     rightHoldStartMs = 0L;
+    lastScaffoldState = false;
+    wasShowingReal = false;
+    switchFadeUntil = 0L;
 }
 
 void onDisable() {
@@ -63,6 +71,9 @@ void onDisable() {
     resetPending = false;
     rightHoldStartMs = 0L;
     prevRight = false;
+    lastScaffoldState = false;
+    wasShowingReal = false;
+    switchFadeUntil = 0L;
 }
 
 void onPreUpdate() {
@@ -145,8 +156,7 @@ int lerpColor(int c1, int c2, double t) {
 
 int getThemeColor(String name) {
     String lo = name.toLowerCase().trim();
-    double mult = modules.getSlider(scriptName, "Time multiplier");
-    double ms = client.time() * mult;
+    double ms = client.time();
 
     if (lo.equals("rainbow")) {
         double t = ms / 420.0;
@@ -209,6 +219,25 @@ boolean passesScaffoldOnly() {
     return true;
 }
 
+boolean isScaffoldEnabled() {
+    try {
+        return modules.isEnabled("Scaffold");
+    } catch (Exception ignored) {}
+    return false;
+}
+
+int getHotbarBlockTotal() {
+    int total = 0;
+    for (int slot = 0; slot < 9; slot++) {
+        ItemStack stack = inventory.getStackInSlot(slot);
+        if (stack == null) continue;
+        if (!stack.isBlock) continue;
+        if (stack.stackSize <= 0) continue;
+        total += stack.stackSize;
+    }
+    return total;
+}
+
 void updateFade(boolean targetVisible) {
     long now = client.time();
     if (lastRenderMs == 0L) lastRenderMs = now;
@@ -243,11 +272,25 @@ void onRenderTick(float partialTicks) {
                     && passesScaffoldOnly()
                     && passesRmbMode();
 
+    long now = client.time();
+    boolean scaffoldEnabled = isScaffoldEnabled();
+    if (showReal && wasShowingReal && scaffoldEnabled != lastScaffoldState) {
+        switchFadeUntil = now + switchFadeMs;
+    }
+    lastScaffoldState = scaffoldEnabled;
+    wasShowingReal = showReal;
+    boolean inSwitchFade = now < switchFadeUntil;
+
     boolean targetVisible = showReal || chatOpen;
     if (otherScreenOpen) targetVisible = false;
+    if (inSwitchFade) targetVisible = false;
 
-    if (showReal) lastCountStr = String.valueOf(held.stackSize);
-    else if (chatOpen) lastCountStr = "64";
+    if (showReal && !inSwitchFade) {
+        int displayCount = isScaffoldEnabled() ? getHotbarBlockTotal() : held.stackSize;
+        lastCountStr = String.valueOf(displayCount);
+    } else if (chatOpen) {
+        lastCountStr = "64";
+    }
 
     updateFade(targetVisible);
 
