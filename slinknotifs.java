@@ -8,7 +8,7 @@ String[] themeOptions = {
     "Grayscale", "Inferno", "Royal", "Sandstorm", "Sky", "Vine"
 };
 String[] disableThemeOptions = {
-    "Disabled", "Rainbow", "Aurora", "Cherry", "Cotton Candy",
+    util.color("&cDisabled"), "Rainbow", "Aurora", "Cherry", "Cotton Candy",
     "Flare", "Flower", "Forest", "Frost", "Gold",
     "Grayscale", "Inferno", "Royal", "Sandstorm", "Sky", "Vine"
 };
