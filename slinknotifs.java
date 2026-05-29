@@ -1,3 +1,5 @@
+String blacklistedModules = "InvMove";
+
 ArrayList<Map<String, Object>> notifications = new ArrayList<Map<String, Object>>();
 Map<String, Boolean> lastStates = new HashMap<String, Boolean>();
 String[] themeOptions = {
@@ -35,7 +37,6 @@ long lastEditPositionWarningMs = 0L;
 
 void onLoad() {
     modules.registerDescription("Slinky inspired notifications.");
-    modules.registerButton("Ignore InvMove", false);
     modules.registerButton("Start with {f}", true);
     modules.registerSlider("Theme", "", 0, themeOptions);
     modules.registerSlider("Disable theme", "", 0, disableThemeOptions);
@@ -403,14 +404,14 @@ int clampInt(int value, int min, int max) {
 }
 
 boolean shouldIgnoreModule(String moduleName) {
-    if (moduleName == null || !moduleName.equalsIgnoreCase("InvMove")) return false;
+    if (moduleName == null || blacklistedModules == null || blacklistedModules.isEmpty()) return false;
 
-    try {
-        return modules.getButton(scriptName, "Ignore InvMove");
-    } catch (Exception ignored) {
+    String[] parts = blacklistedModules.split(",");
+    for (int i = 0; i < parts.length; i++) {
+        if (parts[i].trim().equalsIgnoreCase(moduleName)) return true;
     }
 
-    return true;
+    return false;
 }
 
 boolean isEditingPosition() {
