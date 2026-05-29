@@ -1,6 +1,6 @@
 String[] modes = {"Pause", "Stop"};
 String[] sprintModes = {
-    "Never",
+    util.color("&cNever"),
     "2 ticks", "4 ticks", "6 ticks", "8 ticks", "10 ticks",
     "12 ticks", "14 ticks", "16 ticks", "18 ticks", "20 ticks",
     "Always"
