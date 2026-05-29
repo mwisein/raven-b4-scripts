@@ -10,7 +10,7 @@ String[] settingsThemeMap = {
 };
 
 String[] rmbOptions = {
-    "Disabled","Always","5 tick delay","10 tick delay"
+    util.color("&cDisabled"),"Always","5 tick delay","10 tick delay"
 };
 
 int defaultHudOffsetX = 0;
