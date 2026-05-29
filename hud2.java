@@ -31,31 +31,37 @@ boolean bloomEnabled;
 boolean invertGradient;
 float backgroundRounding;
 
+static final int BLOOM_SHADOW_L4 = 0x08000000;
+static final int BLOOM_SHADOW_L3 = 0x12000000;
+static final int BLOOM_SHADOW_L2 = 0x1C000000;
+static final int BLOOM_SHADOW_L1 = 0x30000000;
+
 void onLoad() {
-    setDataSlider("AutoClicker", "Auto Clicker", "%v1", new String[]{"Min CPS", "Max CPS"});
+    setDataSlider("AutoClicker", "AutoClicker", "%v1", new String[]{"Min CPS", "Max CPS"});
+    setDataSlider("Fake Lag", "Fake Lag", "%v1ms", new String[]{"Outbound delay"});
     setDataSlider("Timer", "Timer", "%v1x", new String[]{"Slider B"});
     setDataSlider("Hitbox", "Hit Box", "%v1x", new String[]{"Multiplier"});
-    setDataArray("KillAura", "Kill Aura", "Targets", new String[]{"Silent"});
+    setDataArray("KillAura", "KillAura", "Targets", new String[]{"Silent"});
     setDataSlider("AntiKnockback", "KB Delay", "%v1ms", new String[]{"Delay"});
     setDataSlider("Backtrack", "", "%v1ms", new String[]{"Delay"});
     setDataSlider("FastMine", "Fast Mine", "%v1x", new String[]{"Break speed"});
-    setDataArray("NoSlow", "", "Mode", new String[]{"Vanilla", "Float", "Interact", "Invalid", "Jump", "Sneak"});
-    setDataArray("BedAura", "", "Break mode", new String[]{"Legit", "Instant", "Swap"});
-    setDataSlider("Lag Range", "", "%v1ms", new String[]{"Packet delay (far)"});
+    setDataArray("NoSlow", "No Slow", "", new String[]{""});
+    setDataArray("BedAura", "Nuker", "Break mode", new String[]{"Legit", "Instant", "Swap"});
+    setDataSlider("Lag Range", "Lag Range", "%v1ms", new String[]{"Packet delay (far)"});
     setDataSlider("Hit Select", "", "%v1ms", new String[]{"Pause"});
-    setDataSlider("Stasis", "", "%v1", new String[]{"Pulse"});
     setDataStatic("GhostHand", "Piercing", "");
     setDataStatic("AimAssist", "Aim Assist", "Lock");
     setDataStatic("WTap", "Sprint Reset", "NoStop");
-    setDataStatic("SafeWalk", "Bridge Assist", "");
+    setDataStatic("SafeWalk", "SafeWalk", "");
     setDataStatic("Jump Reset", "Velocity", "Jump");
     setDataStatic("FastPlace", "Fast Place", "");
     setDataStatic("AutoTool", "Auto Tool", "");
     setDataStatic("Displace", "KB Displacement", "110\u00B0");
+    setDataStatic("Stasis", "", "");
 
-    modules.registerDescription("Slinky inspired HUD.");
+    modules.registerDescription("GPTed. by @mwisein");
     modules.registerSlider("Background", "", 255, 0, 255, 1);
-    modules.registerSlider("Rounding", "", 3.5, 0, 8, 0.1);
+    modules.registerSlider("Rounding", "", 8, 0, 12, 0.1);
     modules.registerSlider("Scale", "", 0.9, 0.5, 2, 0.02);
     modules.registerSlider("Theme", "", 0, themeOptions);
 
@@ -294,6 +300,7 @@ void onRenderTick(float partialTicks) {
         return;
     }
 
+    float uniformRowHeight = getUniformRowHeight(renderEntries);
     int totalW = 1;
     float totalHeight = 0f;
     for (Map<String, Object> entry : renderEntries) {
@@ -301,7 +308,7 @@ void onRenderTick(float partialTicks) {
         float rawTextWidth = ((Number) entry.get("rawTextWidth")).floatValue();
         float rowWidth = rawTextWidth * textScale + getBackgroundPadding(scale) * 2f;
         if (rowWidth > totalW) totalW = (int) Math.ceil(rowWidth);
-        totalHeight += getRowHeight(scale);
+        totalHeight += uniformRowHeight;
     }
     int totalH = Math.max(1, (int) Math.ceil(totalHeight));
 
@@ -346,7 +353,7 @@ void onRenderTick(float partialTicks) {
     xOffset = x;
     yOffset = y;
     lineOnRight = (x + totalW / 2) >= (screenW / 2);
-    layoutEntries(renderEntries, maxRawTextWidth);
+    layoutEntries(renderEntries, maxRawTextWidth, uniformRowHeight);
 
     if (((background >>> 24) & 255) > 0) {
         if (bloomEnabled) {
@@ -359,13 +366,14 @@ void onRenderTick(float partialTicks) {
         float y1 = ((Number) entry.get("y1")).floatValue();
         float finalXPosition = ((Number) entry.get("finalX")).floatValue();
         float scale = ((Number) entry.get("scale")).floatValue();
+        float rowHeight = ((Number) entry.get("rowHeight")).floatValue();
         long baseIndex = ((Number) entry.get("index")).longValue();
         String renderedName  = (String) entry.get("renderedName");
         String renderedValue = (String) entry.get("renderedValue");
         float alpha = ((Number) entry.get("alpha")).floatValue();
         int rowColor = applyAlpha(((Number) entry.get("color")).intValue(), alpha);
 
-        renderPerCharacterText(renderedName, renderedValue, finalXPosition, y1 + getBackgroundPadding(scale), scale, baseIndex, autoStartWithF, alpha, now);
+        renderPerCharacterText(renderedName, renderedValue, finalXPosition, y1 + getTextYOffset(rowHeight, scale), scale, baseIndex, autoStartWithF, alpha, now);
 
         if (lineEnabled) {
             float edgeExtend = backgroundRounding > 0.05f ? Math.max(1.0f, 1.2f * textScale) : 0.0f;
@@ -382,7 +390,7 @@ void onRenderTick(float partialTicks) {
     }
 }
 
-void layoutEntries(List<Map<String, Object>> renderEntries, float maxRawTextWidth) {
+void layoutEntries(List<Map<String, Object>> renderEntries, float maxRawTextWidth, float uniformRowHeight) {
     float y = yOffset;
     for (Map<String, Object> entry : renderEntries) {
         float scale = ((Number) entry.get("scale")).floatValue();
@@ -393,7 +401,7 @@ void layoutEntries(List<Map<String, Object>> renderEntries, float maxRawTextWidt
         if (exiting) slide = (float) Math.sqrt(slide);
 
         float slideX = lineOnRight ? slide * 18f : -slide * 18f;
-        float rowHeight = getRowHeight(scale);
+        float rowHeight = uniformRowHeight;
         float pad = getBackgroundPadding(scale);
         float rowTextWidth = rawTextWidth * textScale;
         float slideY = -slide * Math.max(7f, rowHeight * 1.1f);
@@ -432,13 +440,14 @@ void layoutEntries(List<Map<String, Object>> renderEntries, float maxRawTextWidt
         entry.put("bgX2", bgX2);
         entry.put("lineX", lineX);
         entry.put("finalX", finalXPosition);
+        entry.put("rowHeight", rowHeight);
 
         y += rowHeight * (animate ? alpha : 1f);
     }
 }
 
 float getBackgroundPadding(float scale) {
-    return Math.max(0.55f, scale * 0.55f);
+    return Math.max(0.8f, scale * 1.0f);
 }
 
 float getRowHeight(float scale) {
@@ -446,32 +455,63 @@ float getRowHeight(float scale) {
     return render.getFontHeight() * scale + pad * 2f;
 }
 
+float getUniformRowHeight(List<Map<String, Object>> renderEntries) {
+    float rowHeight = getRowHeight(textScale);
+    for (Map<String, Object> entry : renderEntries) {
+        float scale = ((Number) entry.get("scale")).floatValue();
+        float entryHeight = getRowHeight(scale);
+        if (entryHeight > rowHeight) rowHeight = entryHeight;
+    }
+    return rowHeight;
+}
+
+float getTextYOffset(float rowHeight, float scale) {
+    float textHeight = render.getFontHeight() * scale;
+    return Math.max(0.0f, (rowHeight - textHeight) * 0.5f);
+}
+
 void drawArrayBackground(List<Map<String, Object>> renderEntries, int fillColor) {
     drawArrayBackgroundLayer(renderEntries, fillColor);
 }
 
 void drawArrayBloom(List<Map<String, Object>> renderEntries) {
-    render.bloom.prepare();
-    drawArrayBackground(renderEntries, 0xFF000000);
-    render.bloom.apply(1, 1);
+    drawArrayBackgroundLayer(renderEntries, BLOOM_SHADOW_L4, 4.0f);
+    drawArrayBackgroundLayer(renderEntries, BLOOM_SHADOW_L3, 3.0f);
+    drawArrayBackgroundLayer(renderEntries, BLOOM_SHADOW_L2, 2.0f);
+    drawArrayBackgroundLayer(renderEntries, BLOOM_SHADOW_L1, 1.0f);
 }
 
 void drawArrayBackgroundLayer(List<Map<String, Object>> renderEntries, int fillColor) {
+    drawArrayBackgroundLayer(renderEntries, fillColor, 0.0f);
+}
+
+void drawArrayBackgroundLayer(List<Map<String, Object>> renderEntries, int fillColor, float shadowExpand) {
     boolean rounded = backgroundRounding > 0.05f;
-    float radius = Math.max(0.0f, backgroundRounding * textScale);
-    float extend = rounded ? Math.max(1.0f, 1.2f * textScale) : 0.0f;
-    float extendY = extend * 0.45f;
+    float radius = Math.max(0.0f, backgroundRounding * textScale) + shadowExpand;
+    float baseExtend = rounded ? Math.max(1.0f, 1.2f * textScale) : 0.0f;
+    float extend = baseExtend + shadowExpand;
+    float extendY = baseExtend * 0.45f + shadowExpand;
     float minY = Float.MAX_VALUE;
     float maxY = -Float.MAX_VALUE;
+    float uniformRadius = radius;
 
     for (Map<String, Object> entry : renderEntries) {
-        float y1 = ((Number) entry.get("y1")).floatValue() - extendY;
-        float y2 = ((Number) entry.get("y2")).floatValue() + extendY;
-        if (y1 < minY) minY = y1;
-        if (y2 > maxY) maxY = y2;
+        float rowX1 = ((Number) entry.get("bgX1")).floatValue() - extend;
+        float rowY1 = ((Number) entry.get("y1")).floatValue() - extendY;
+        float rowX2 = ((Number) entry.get("bgX2")).floatValue() + extend;
+        float rowY2 = ((Number) entry.get("y2")).floatValue() + extendY;
+        if (rowY1 < minY) minY = rowY1;
+        if (rowY2 > maxY) maxY = rowY2;
+        if (rounded) {
+            float widthHalf = (rowX2 - rowX1) * 0.5f;
+            float heightHalf = (rowY2 - rowY1) * 0.5f;
+            float constraint = Math.max(0.0f, Math.min(widthHalf, heightHalf) - 0.1f);
+            if (constraint < uniformRadius) uniformRadius = constraint;
+        }
     }
 
     if (minY >= maxY) return;
+    if (!rounded) uniformRadius = 0.0f;
 
     boolean roundTopEdge = rounded && minY > 3.0f;
     float step = rounded ? 0.5f : 1.0f;
@@ -492,9 +532,8 @@ void drawArrayBackgroundLayer(List<Map<String, Object>> renderEntries, int fillC
             float rowLeft = rowX1;
             float rowRight = rowX2;
             if (rounded) {
-                float rowRadius = Math.min(radius, Math.max(0.0f, Math.min((rowX2 - rowX1) * 0.5f, (rowY2 - rowY1) * 0.5f) - 0.1f));
                 boolean isTopRow = Math.abs(rowY1 - minY) < 0.75f;
-                float inset = getHorizontalCornerInset(midY, rowY1, rowY2, rowRadius, roundTopEdge && isTopRow);
+                float inset = getHorizontalCornerInset(midY, rowY1, rowY2, uniformRadius, roundTopEdge && isTopRow);
                 if (lineOnRight) {
                     rowLeft += inset;
                 } else {
@@ -747,40 +786,33 @@ void updateButtonStates() {
 
 void sortModules() {
     mods.sort((a, b) -> {
-        String aName = (String) a.get("name");
-        String bName = (String) b.get("name");
-        String aDisplayName = aName, bDisplayName = bName;
-        String aValue = "", bValue = "";
-
-        if (customModuleData.containsKey(aName)) {
-            Map<String, String> d = customModuleData.get(aName);
-            aDisplayName = d.getOrDefault("alias", aName);
-            aValue = d.getOrDefault("overrideValue", "");
-        }
-        if (customModuleData.containsKey(bName)) {
-            Map<String, String> d = customModuleData.get(bName);
-            bDisplayName = d.getOrDefault("alias", bName);
-            bValue = d.getOrDefault("overrideValue", "");
-        }
-
-        int widthA = render.getFontWidth(getSortModuleText(aDisplayName, aValue));
-        int widthB = render.getFontWidth(getSortModuleText(bDisplayName, bValue));
-        return Integer.compare(widthB, widthA);
+        float widthA = getModuleSortWidth(a);
+        float widthB = getModuleSortWidth(b);
+        if (widthA < widthB) return 1;
+        if (widthA > widthB) return -1;
+        return ((String) a.get("name")).compareToIgnoreCase((String) b.get("name"));
     });
+}
+
+float getModuleSortWidth(Map<String, Object> mod) {
+    String moduleName = (String) mod.get("name");
+    String displayName = moduleName;
+    String displayValue = "";
+
+    if (customModuleData.containsKey(moduleName)) {
+        Map<String, String> data = customModuleData.get(moduleName);
+        displayName = data.getOrDefault("alias", moduleName);
+        displayValue = data.getOrDefault("overrideValue", "");
+    }
+
+    if (lowercase) {
+        displayName = displayName.toLowerCase();
+        displayValue = displayValue.toLowerCase();
+    }
+
+    return getPerCharacterTextWidth(displayName, displayValue, autoStartWithF);
 }
 
 String formatDoubleStr(double val) {
     return val == (long) val ? Long.toString((long) val) : Double.toString(val);
-}
-
-String getModuleText(String displayName, String displayValue) {
-    String moduleText = displayName + (displayValue.isEmpty() ? "" : " " + util.colorSymbol + "7" + displayValue);
-    if (autoStartWithF && !moduleText.startsWith("{f}")) moduleText = "{f}" + moduleText;
-    return moduleText;
-}
-
-String getSortModuleText(String displayName, String displayValue) {
-    String moduleText = getModuleText(displayName, displayValue);
-    if (lowercase) moduleText = moduleText.toLowerCase();
-    return moduleText;
 }
