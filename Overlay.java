@@ -887,6 +887,8 @@ Map<String, Image> headImageCache = new ConcurrentHashMap<>();
 Map<String, Double> teamSortValues = new ConcurrentHashMap<>();
 boolean overlayNeedsSort = false;
 boolean overlayNeedsLayout = false;
+boolean nameHiderLastActive = false;
+long nameHiderLastBucket = -1L;
 
 final static String playerKey = "player",
                     tagsKey = "tags",
@@ -897,6 +899,7 @@ void registerDefaultButtons() {
     modules.registerSlider("Show bind", "", 0, showBindOptions);
     modules.registerButton("Hold", true);
     modules.registerSlider("Sort by", "", 0, new String[] {"Team", "Star", "FKDR", "Winstreak"});
+    modules.registerButton("Hide team", false);
     modules.registerButton("Print urchin reason", false);
     modules.registerButton("Collapse final deaths", true);
     modules.registerDescription("=> Visual");
@@ -1069,28 +1072,27 @@ void applyOverlayScale() {
     if (Math.abs(prev - textScale) > 0.001f) overlayNeedsLayout = true;
 }
 
-void loadOverlayHud() {
-    brOffsetX = 12.0f; brOffsetY = 12.0f;
-    blOffsetX = 12.0f; blOffsetY = 12.0f;
-    trOffsetX = 12.0f; trOffsetY = 12.0f;
-    tlOffsetX = 12.0f; tlOffsetY = 12.0f;
-    overlayScale = 1.0f;
+float readOverlayHudFloat(String key, float fallback) {
     try {
-        String brx = config.get("overlayBrX"); String bry = config.get("overlayBrY");
-        String blx = config.get("overlayBlX"); String bly = config.get("overlayBlY");
-        String trx = config.get("overlayTrX"); String tryV = config.get("overlayTrY");
-        String tlx = config.get("overlayTlX"); String tly = config.get("overlayTlY");
-        String ss  = config.get("overlayScale");
-        if (brx != null && !brx.isEmpty()) brOffsetX = Float.parseFloat(brx);
-        if (bry != null && !bry.isEmpty()) brOffsetY = Float.parseFloat(bry);
-        if (blx != null && !blx.isEmpty()) blOffsetX = Float.parseFloat(blx);
-        if (bly != null && !bly.isEmpty()) blOffsetY = Float.parseFloat(bly);
-        if (trx != null && !trx.isEmpty()) trOffsetX = Float.parseFloat(trx);
-        if (tryV != null && !tryV.isEmpty()) trOffsetY = Float.parseFloat(tryV);
-        if (tlx != null && !tlx.isEmpty()) tlOffsetX = Float.parseFloat(tlx);
-        if (tly != null && !tly.isEmpty()) tlOffsetY = Float.parseFloat(tly);
-        if (ss  != null && !ss.isEmpty())  overlayScale = clamp(Float.parseFloat(ss), 0.55f, 1.8f);
+        String value = config.get(key);
+        if (value == null) return fallback;
+        value = value.trim();
+        if (value.isEmpty()) return fallback;
+        return Float.parseFloat(value);
     } catch (Exception ignored) {}
+    return fallback;
+}
+
+void loadOverlayHud() {
+    brOffsetX = readOverlayHudFloat("overlayBrX", brOffsetX);
+    brOffsetY = readOverlayHudFloat("overlayBrY", brOffsetY);
+    blOffsetX = readOverlayHudFloat("overlayBlX", blOffsetX);
+    blOffsetY = readOverlayHudFloat("overlayBlY", blOffsetY);
+    trOffsetX = readOverlayHudFloat("overlayTrX", trOffsetX);
+    trOffsetY = readOverlayHudFloat("overlayTrY", trOffsetY);
+    tlOffsetX = readOverlayHudFloat("overlayTlX", tlOffsetX);
+    tlOffsetY = readOverlayHudFloat("overlayTlY", tlOffsetY);
+    overlayScale = clamp(readOverlayHudFloat("overlayScale", overlayScale), 0.55f, 1.8f);
     applyOverlayScale();
 }
 
@@ -1437,6 +1439,7 @@ void onPreUpdate() {
     printEditPositionWarningIfNeeded();
     updateStatus();
     updateBindToggle();
+    updateNameHiderObfuscationState();
 
     if (overlayTicks++ % 5 != 0) return;
 
@@ -1557,6 +1560,13 @@ boolean isFormattingCode(char c) {
         || (lower >= '0' && lower <= '9') || (lower >= 'a' && lower <= 'f');
 }
 
+boolean isMagicText(String text) {
+    if (text == null || text.isEmpty()) return false;
+    String magic = util.colorSymbol + "k";
+    String magicUpper = util.colorSymbol + "K";
+    return text.indexOf(magic) >= 0 || text.indexOf(magicUpper) >= 0 || text.toLowerCase().indexOf("&k") >= 0;
+}
+
 String plainRenderText(String text) {
     if (text == null || text.isEmpty()) return "";
     String cached = textRenderCache.get(text);
@@ -1595,7 +1605,55 @@ int resolveNormalTextColor(String text, int fallback) {
     return (fallback & 0xFF000000) | (color & 0x00FFFFFF);
 }
 
+boolean hasFormattingCodes(String text) {
+    if (text == null || text.isEmpty()) return false;
+    char colorChar = util.colorSymbol != null && !util.colorSymbol.isEmpty() ? util.colorSymbol.charAt(0) : '\0';
+    for (int i = 0; i + 1 < text.length(); i++) {
+        char c = text.charAt(i);
+        if ((c == colorChar || c == '&') && isFormattingCode(text.charAt(i + 1))) return true;
+    }
+    return false;
+}
+
+void drawFormattedOverlayText(String text, float x, float y, float scale, int fallbackColor) {
+    String value = text == null ? "" : text;
+    char colorChar = util.colorSymbol != null && !util.colorSymbol.isEmpty() ? util.colorSymbol.charAt(0) : '\0';
+    int alphaMask = fallbackColor & 0xFF000000;
+    int currentColor = fallbackColor;
+    float cursor = x;
+    StringBuilder segment = new StringBuilder();
+
+    for (int i = 0; i < value.length(); i++) {
+        char c = value.charAt(i);
+        if ((c == colorChar || c == '&') && i + 1 < value.length() && isFormattingCode(value.charAt(i + 1))) {
+            if (segment.length() > 0) {
+                String chunk = segment.toString();
+                render.text(chunk, cursor, y, scale, currentColor, false);
+                cursor += render.getFontWidth(chunk) * scale;
+                segment.setLength(0);
+            }
+
+            char code = Character.toLowerCase(value.charAt(i + 1));
+            if (isColorCode(code)) currentColor = alphaMask | (getCodeColor(code) & 0x00FFFFFF);
+            else if (code == 'r') currentColor = fallbackColor;
+            i++;
+            continue;
+        }
+
+        segment.append(c);
+    }
+
+    if (segment.length() > 0) {
+        render.text(segment.toString(), cursor, y, scale, currentColor, false);
+    }
+}
+
 void drawOverlayText(String text, float x, float y, float scale, int color) {
+    if (!_rtStartWithF && hasFormattingCodes(text)) {
+        drawFormattedOverlayText(text, x, y, scale, color);
+        return;
+    }
+
     render.text(fontText(text), x, y, scale, resolveNormalTextColor(text, color), _rtStartWithF);
 }
 float clamp(float value, float min, float max) { return Math.max(min, Math.min(max, value)); }
@@ -1780,7 +1838,6 @@ void applyOverlayPosition(int corner, float panelWidth, float panelHeight) {
     boolean right = isRightOverlayCorner(corner), bottom = isBottomOverlayCorner(corner);
     float xOffset = clamp(offsets[0], 2.0f, Math.max(2.0f, (q[1] - q[0]) - panelWidth - 2.0f));
     float yOffset = clamp(offsets[1], 2.0f, Math.max(2.0f, (q[3] - q[2]) - panelHeight - 2.0f));
-    setOverlayOffsets(corner, xOffset, yOffset);
     startX = right ? (q[1] - panelWidth - xOffset) : (q[0] + xOffset);
     startY = bottom ? (q[3] - panelHeight - yOffset) : (q[2] + yOffset);
 }
@@ -1793,10 +1850,13 @@ void drawRectOutline(float x1, float y1, float x2, float y2, float thickness, in
 }
 
 void drawFastBloom(float x1, float y1, float x2, float y2, float anim) {
-    float spread = Math.max(2.0f, 3.0f * textScale);
-    render.rect(x1 - spread * 2.0f, y1 - spread * 2.0f, x2 + spread * 2.0f, y2 + spread * 2.0f, multiplyAlpha(0x08000000, anim));
-    render.rect(x1 - spread, y1 - spread, x2 + spread, y2 + spread, multiplyAlpha(0x12000000, anim));
-    render.rect(x1 - spread * 0.45f, y1 - spread * 0.45f, x2 + spread * 0.45f, y2 + spread * 0.45f, multiplyAlpha(0x1C000000, anim));
+    float unit = Math.max(1.0f, textScale);
+    float radius = Math.max(5.0f, 6.0f * textScale);
+
+    render.roundedRect(x1 - 4.0f * unit, y1 - 4.0f * unit, x2 + 4.0f * unit, y2 + 4.0f * unit, radius + 4.0f * unit, multiplyAlpha(0x08000000, anim));
+    render.roundedRect(x1 - 3.0f * unit, y1 - 3.0f * unit, x2 + 3.0f * unit, y2 + 3.0f * unit, radius + 3.0f * unit, multiplyAlpha(0x12000000, anim));
+    render.roundedRect(x1 - 2.0f * unit, y1 - 2.0f * unit, x2 + 2.0f * unit, y2 + 2.0f * unit, radius + 2.0f * unit, multiplyAlpha(0x1C000000, anim));
+    render.roundedRect(x1 - 1.0f * unit, y1 - 1.0f * unit, x2 + 1.0f * unit, y2 + 1.0f * unit, radius + 1.0f * unit, multiplyAlpha(0x30000000, anim));
 }
 
 void drawOverlayQuadrant(int corner) {
@@ -1924,11 +1984,12 @@ String getDisplayStarForData(Map<String, Object> playerData) {
 
 boolean shouldColourNameByTeam() { return _rtColourByTeam; }
 
-float getPlayerCellWidth(Map<String, Object> playerData, String text) {
+float getPlayerCellWidth(String uuid, Map<String, Object> playerData, String text) {
     float width = getCellWidth(playerKey, text);
-    boolean nicked = playerData != null && Boolean.TRUE.equals(playerData.get("nicked"));
-    if (!nicked && playerData != null && playerData.get(starKey) != null) {
-        String star = getDisplayStarForData(playerData);
+    boolean hideSelfStats = shouldObfuscateSelfStats(uuid);
+    boolean nicked = !hideSelfStats && playerData != null && Boolean.TRUE.equals(playerData.get("nicked"));
+    if (hideSelfStats || (!nicked && playerData != null && playerData.get(starKey) != null)) {
+        String star = hideSelfStats ? getObfuscatedStarText(uuid, playerData) : getDisplayStarForData(playerData);
         if (!star.isEmpty()) width += textWidth(star) * textScale + 4.0f * textScale;
     }
     return width;
@@ -2013,19 +2074,237 @@ boolean isSelfUuid(String uuid) {
     return uuid != null && !uuid.isEmpty() && self != null && uuid.equalsIgnoreCase(self);
 }
 
+boolean isNameHiderActive() {
+    try { if (modules.isEnabled("Name Hider")) return true; } catch (Exception ignored) {}
+    return false;
+}
+
+boolean shouldHideOwnTeam() {
+    try { return modules.getButton(scriptName, "Hide team"); } catch (Exception ignored) {}
+    return false;
+}
+
+boolean shouldObfuscateSelfStats(String uuid) {
+    boolean hideTeam = shouldHideOwnTeam();
+    return (isNameHiderActive() && isSelfUuid(uuid)) || (hideTeam && (isSelfUuid(uuid) || isOwnTeamUuid(uuid)));
+}
+
+long getObfuscationSeed(String uuid, String key) {
+    String mix = (uuid == null ? "self" : uuid) + "|" + key + "|" + (client.time() / 4500L);
+    long seed = 1125899906842597L;
+    for (int i = 0; i < mix.length(); i++) seed = 31L * seed + mix.charAt(i);
+    return seed;
+}
+
+int getObfuscatedInt(String uuid, String key, int min, int max) {
+    if (max <= min) return min;
+    Random random = new Random(getObfuscationSeed(uuid, key));
+    return min + random.nextInt(max - min + 1);
+}
+
+double getObfuscatedDouble(String uuid, String key, double min, double max, int decimals) {
+    Random random = new Random(getObfuscationSeed(uuid, key));
+    double raw = min + random.nextDouble() * (max - min);
+    double factor = Math.pow(10.0, decimals);
+    return Math.floor(raw * factor + 0.5) / factor;
+}
+
+int getObfuscatedStarNumber(String uuid) {
+    return getObfuscatedInt(uuid, "star", 1, 999);
+}
+
+boolean isColorCode(char code) {
+    char lower = Character.toLowerCase(code);
+    return (lower >= '0' && lower <= '9') || (lower >= 'a' && lower <= 'f');
+}
+
+char getMagicReplacementChar(char original, long tick, int index, int salt) {
+    String primaryPool = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    String symbolPool = "!?#$%&@";
+    String pool = Character.isDigit(original) ? "0123456789"
+        : Character.isLetter(original) ? primaryPool
+        : primaryPool + symbolPool;
+
+    float targetWidth = render.getFontWidth(String.valueOf(original));
+    StringBuilder widthMatches = new StringBuilder();
+    for (int i = 0; i < pool.length(); i++) {
+        char candidate = pool.charAt(i);
+        if (Math.abs(render.getFontWidth(String.valueOf(candidate)) - targetWidth) <= 0.01f) {
+            widthMatches.append(candidate);
+        }
+    }
+
+    String choices = widthMatches.length() > 0 ? widthMatches.toString() : pool;
+    long seed = tick * 73428767L + index * 912367L + salt * 31L + original;
+    if (seed < 0L) seed = -seed;
+    return choices.charAt((int) (seed % choices.length()));
+}
+
+String applyMagicToFormattedText(String text) {
+    String value = text == null ? "" : text;
+    if (value.isEmpty()) value = "--";
+
+    char colorChar = util.colorSymbol != null && !util.colorSymbol.isEmpty() ? util.colorSymbol.charAt(0) : '\u00A7';
+    long magicTick = client.time() / 32L;
+    int salt = value.hashCode();
+    StringBuilder out = new StringBuilder();
+    boolean magicActive = false;
+    int visibleIndex = 0;
+
+    for (int i = 0; i < value.length(); i++) {
+        char c = value.charAt(i);
+        if ((c == colorChar || c == '&') && i + 1 < value.length() && isFormattingCode(value.charAt(i + 1))) {
+            char code = value.charAt(i + 1);
+            char lower = Character.toLowerCase(code);
+            out.append(c).append(code);
+            if (isColorCode(lower) || lower == 'r') {
+                out.append(colorChar).append('k');
+                magicActive = true;
+            } else if (lower == 'k') {
+                magicActive = true;
+            }
+            i++;
+            continue;
+        }
+
+        if (!magicActive && !Character.isWhitespace(c)) {
+            out.append(colorChar).append('k');
+            magicActive = true;
+        }
+
+        if (magicActive && !Character.isWhitespace(c)) {
+            out.append(getMagicReplacementChar(c, magicTick + visibleIndex, visibleIndex, salt));
+        } else {
+            out.append(c);
+        }
+        if (!Character.isWhitespace(c)) visibleIndex++;
+    }
+
+    out.append(colorChar).append('r');
+    return out.toString();
+}
+
+int getSelfNameLength() {
+    try {
+        Entity player = client.getPlayer();
+        if (player != null) {
+            String name = player.getName();
+            if (name != null && !name.isEmpty()) return Math.max(3, name.length());
+        }
+    } catch (Exception ignored) {}
+    return 8;
+}
+
+String getObfuscatedStarText(String uuid, Map<String, Object> playerData) {
+    String star = playerData != null && playerData.get(starKey) != null ? getDisplayStarForData(playerData) : "";
+    if (star == null || star.isEmpty()) return "";
+    return applyMagicToFormattedText(star);
+}
+
+double getObfuscatedFkdrNumber(String uuid) {
+    return getObfuscatedDouble(uuid, "fkdr", 0.3, 18.0, 2);
+}
+
+double getObfuscatedWlrNumber(String uuid) {
+    return getObfuscatedDouble(uuid, "wlr", 0.25, 9.5, 2);
+}
+
+int getObfuscatedWinsNumber(String uuid) {
+    return getObfuscatedInt(uuid, "wins", 20, 6500);
+}
+
+int getObfuscatedWinstreakNumber(String uuid) {
+    return getObfuscatedInt(uuid, "winstreak", 0, 180);
+}
+
+String getObfuscatedSelfName(String uuid, String original) {
+    return applyMagicToFormattedText(original);
+}
+
+String getObfuscatedSessionText(String uuid, Object original) {
+    return applyMagicToFormattedText(original != null ? original.toString() : "--");
+}
+
+String getObfuscatedTagsText(String uuid, Object original) {
+    return applyMagicToFormattedText(original != null ? original.toString() : "--");
+}
+
+Object getObfuscatedOverlayValue(String uuid, Map<String, Object> playerStats, String statKey, Object fallback) {
+    if (!shouldObfuscateSelfStats(uuid)) return fallback;
+    if (statKey == null) return util.colorSymbol + "8--";
+    if (statKey.equals(headsKey)) return fallback;
+    if (statKey.equals(playerKey)) return getObfuscatedSelfName(uuid, fallback != null ? fallback.toString() : "");
+    if (statKey.equals(starKey)) return getObfuscatedStarText(uuid, playerStats);
+    if (statKey.equals(sessionKey)) return getObfuscatedSessionText(uuid, fallback);
+    if (statKey.equals(tagsKey)) return getObfuscatedTagsText(uuid, fallback);
+    return applyMagicToFormattedText(fallback != null ? fallback.toString() : "--");
+}
+
+String getObfuscatedSortValue(String uuid, Map<String, Object> playerStats, String key) {
+    if (key == null) return "-";
+    return (playerStats != null && playerStats.get(key) != null) ? playerStats.get(key).toString() : "-";
+}
+
+String getObfuscatedSortName(String uuid, Map<String, Object> playerStats) {
+    return playerStats != null && playerStats.get(playerKey) != null ? util.strip(playerStats.get(playerKey).toString()) : uuid;
+}
+
+void updateNameHiderObfuscationState() {
+    boolean active = isNameHiderActive();
+    long bucket = active ? 0L : -1L;
+    if (active != nameHiderLastActive || bucket != nameHiderLastBucket) {
+        nameHiderLastActive = active;
+        nameHiderLastBucket = bucket;
+        overlayNeedsLayout = true;
+        overlayNeedsSort = true;
+    }
+}
+
 String getTeamTokenForUuid(String uuid) {
     if (uuid == null || uuid.isEmpty()) return "";
     String display = teams.getOrDefault(uuid, "");
+    if (display == null || display.isEmpty()) {
+        try {
+            for (NetworkPlayer player : world.getNetworkPlayers()) {
+                String playerUuid = player.getUUID();
+                if (playerUuid != null && playerUuid.replace("-", "").equalsIgnoreCase(uuid)) {
+                    display = player.getDisplayName();
+                    break;
+                }
+            }
+        } catch (Exception ignored) {}
+    }
     if (display == null || display.isEmpty()) return "";
     return getTeamToken(display).toLowerCase();
 }
 
+char getTeamColorForUuid(String uuid) {
+    if (uuid == null || uuid.isEmpty()) return ' ';
+    String display = teams.getOrDefault(uuid, "");
+    if (display == null || display.isEmpty()) {
+        try {
+            for (NetworkPlayer player : world.getNetworkPlayers()) {
+                String playerUuid = player.getUUID();
+                if (playerUuid != null && playerUuid.replace("-", "").equalsIgnoreCase(uuid)) {
+                    display = player.getDisplayName();
+                    break;
+                }
+            }
+        } catch (Exception ignored) {}
+    }
+    return display == null || display.isEmpty() ? ' ' : getTeamColorCode(display);
+}
+
 boolean isOwnTeamUuid(String uuid) {
-    if (status != 3 || uuid == null || uuid.isEmpty()) return false;
+    if (uuid == null || uuid.isEmpty()) return false;
     if (isSelfUuid(uuid)) return false;
     String selfToken = getTeamTokenForUuid(getSelfUuid());
     String otherToken = getTeamTokenForUuid(uuid);
-    return !selfToken.isEmpty() && selfToken.equals(otherToken);
+    if (!selfToken.isEmpty() && selfToken.equals(otherToken)) return true;
+
+    char selfColor = getTeamColorForUuid(getSelfUuid());
+    char otherColor = getTeamColorForUuid(uuid);
+    return selfColor != ' ' && selfColor == otherColor;
 }
 
 int getOverlayRowColor(String uuid, boolean isNicked, int rowIndex) {
@@ -2051,14 +2330,16 @@ void drawColumnSections(float y, float height, int accent, float anim) {
 }
 
 void drawPlayerCell(String uuid, Map<String, Object> playerStats, Object statValue, float x, float y, float maxWidth, float anim) {
+    boolean hideSelfStats = shouldObfuscateSelfStats(uuid);
     Image head = playerStats != null && playerStats.get(headsKey) instanceof Image ? (Image) playerStats.get(headsKey) : defaultHead;
     float headSize = Math.max(8.0f * textScale, lineHeight - 3.0f * textScale);
     float headY = y + (lineHeight - headSize) / 2.0f;
     render.image((head != null && head.isLoaded()) ? head : defaultHead, x, headY, headSize, headSize);
 
-    String name = getPlayerRenderName(statValue != null ? statValue.toString() : "");
-    boolean nicked = playerStats != null && Boolean.TRUE.equals(playerStats.get("nicked"));
-    String star = !nicked && playerStats != null && playerStats.get(starKey) != null ? getDisplayStarForData(playerStats) : "";
+    String rawName = getPlayerRenderName(statValue != null ? statValue.toString() : "");
+    String name = hideSelfStats ? getObfuscatedSelfName(uuid, rawName) : rawName;
+    boolean nicked = !hideSelfStats && playerStats != null && Boolean.TRUE.equals(playerStats.get("nicked"));
+    String star = hideSelfStats ? getObfuscatedStarText(uuid, playerStats) : !nicked && playerStats != null && playerStats.get(starKey) != null ? getDisplayStarForData(playerStats) : "";
     float nameX = x + headSize + 7.0f * textScale;
     float nameY = y + (lineHeight - fontHeight) / 2.0f;
     if (!star.isEmpty()) {
@@ -2165,16 +2446,17 @@ void onRenderTick(float partialTicks) {
         String requestState  = String.valueOf(playerStats.getOrDefault(requestStateKey, ""));
         boolean isLoading    = "loading".equals(requestState);
         boolean isRateLimited = "rate".equals(requestState);
+        boolean hideSelfStats = shouldObfuscateSelfStats(uuid);
         render.rect(startX, y, endX, y + lineHeight, multiplyAlpha(getOverlayRowColor(uuid, isNicked, rowIndex), anim));
 
         for (Map<String, Object> column : columns) {
             String statKey = column.get("key").toString();
             float maxWidth = Float.parseFloat(column.get("maxwidth").toString());
             Object statValue = playerStats.get(statKey);
-            String stringStatValue = String.valueOf(statValue);
+            String stringStatValue = statValue != null ? String.valueOf(statValue) : "";
             float x = Float.parseFloat(column.get("position").toString());
 
-            if (isNicked) {
+            if (!hideSelfStats && isNicked) {
                 if (statKey.equals(headsKey)) {
                     statValue = defaultHead;
                 } else if (!statKey.equals(playerKey)) {
@@ -2191,12 +2473,13 @@ void onRenderTick(float partialTicks) {
                     statValue = util.colorSymbol + "8...";
                 }
             }
+            stringStatValue = statValue != null ? String.valueOf(statValue) : "";
 
             switch (statKey) {
                 case playerKey:
-                    if (isNicked && !shouldUseTeamDisplay(uuid))
+                    if (!hideSelfStats && isNicked && !shouldUseTeamDisplay(uuid))
                         statValue = util.colorSymbol + 'e' + stringStatValue.replaceAll(util.colorSymbol + ".", "");
-                    if (isError && (statValue == null || stringStatValue.isEmpty() || stringStatValue.equals(util.colorSymbol + "7-")))
+                    if (!hideSelfStats && isError && (statValue == null || stringStatValue.isEmpty() || stringStatValue.equals(util.colorSymbol + "7-")))
                         statValue = util.colorSymbol + "4E";
                     if (statValue == null || stringStatValue.isEmpty()) { overlayPlayers.remove(uuid); continue; }
                     drawPlayerCell(uuid, playerStats, statValue, x, y, maxWidth, anim);
@@ -2231,6 +2514,7 @@ void onRenderTick(float partialTicks) {
 
             String text = statValue != null ? statValue.toString() : "";
             if (text.isEmpty()) continue;
+            if (hideSelfStats) text = applyMagicToFormattedText(text);
             float textY = y + (lineHeight - fontHeight) / 2.0f;
             drawOverlayText(text, x, textY, textScale, multiplyAlpha(0xFFFFFFFF, anim));
         }
@@ -2457,8 +2741,8 @@ Comparator<String> comparator = (uuid1, uuid2) -> {
         if (isNicked1 && !isNicked2) return ascending ? -1 : 1;
         if (!isNicked1 && isNicked2) return ascending ? 1 : -1;
 
-        String val1 = (stats1 != null && stats1.get(sortBy) != null) ? stats1.get(sortBy).toString() : "-";
-        String val2 = (stats2 != null && stats2.get(sortBy) != null) ? stats2.get(sortBy).toString() : "-";
+        String val1 = getObfuscatedSortValue(uuid1, stats1, sortBy);
+        String val2 = getObfuscatedSortValue(uuid2, stats2, sortBy);
         val1 = val1.replaceAll(util.colorSymbol + ".", "");
         val2 = val2.replaceAll(util.colorSymbol + ".", "");
 
@@ -2471,8 +2755,8 @@ Comparator<String> comparator = (uuid1, uuid2) -> {
                             : Double.compare(Double.parseDouble(val1), Double.parseDouble(val2));
         if (cmp != 0) return cmp;
 
-        String name1 = stats1 != null && stats1.get(playerKey) != null ? util.strip(stats1.get(playerKey).toString()) : uuid1;
-        String name2 = stats2 != null && stats2.get(playerKey) != null ? util.strip(stats2.get(playerKey).toString()) : uuid2;
+        String name1 = getObfuscatedSortName(uuid1, stats1);
+        String name2 = getObfuscatedSortName(uuid2, stats2);
         return name1.compareToIgnoreCase(name2);
     } catch (NumberFormatException e) {
         client.log("NumberFormatException for " + uuid1 + " or " + uuid2);
@@ -2764,7 +3048,7 @@ void doColumns() {
                 statValue = statValueObj.toString();
             }
             if (statKey.equals(sessionKey)) statValue = getLiveOnlineText(playerData, statValueObj);
-            float width = statKey.equals(playerKey) ? getPlayerCellWidth(playerData, statValue) : getCellWidth(statKey, statValue);
+            float width = statKey.equals(playerKey) ? getPlayerCellWidth(uuid, playerData, statValue) : getCellWidth(statKey, statValue);
             if (width > longest) longest = width;
         }};
 
