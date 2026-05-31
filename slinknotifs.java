@@ -41,7 +41,7 @@ void onLoad() {
     modules.registerSlider("Theme", "", 0, themeOptions);
     modules.registerSlider("Disable theme", "", 0, disableThemeOptions);
     modules.registerSlider("Duration", "ms", 3000, 1000, 7000, 100);
-    modules.registerSlider("Scale", "x", 0.9, 0.5, 2.0, 0.1);
+    modules.registerSlider("Scale", "x", 1.0, 0.5, 2.0, 0.1);
     modules.registerSlider("Position", "", 3, new String[] {"Bottom Right", "Bottom Left", "Top Right", "Top Left"});
     modules.registerButton("Edit position", false);
     loadNotificationPosition();
@@ -220,11 +220,11 @@ void renderNotifications() {
     float uiScale = (float) modules.getSlider(scriptName, "Scale");
     boolean fontPrefix = useFontPrefix();
     float scale = 0.78f * uiScale;
-    float tagScale = 0.76f * uiScale;
+    float tagScale = 0.70f * uiScale;
     float padding = 5.0f * uiScale;
-    float height = 22.5f * uiScale;
-    float tagHeight = 13.5f * uiScale;
-    float spacing = height + 4.0f * uiScale;
+    float height = 18.5f * uiScale;
+    float tagHeight = 11.5f * uiScale;
+    float spacing = height + 3.0f * uiScale;
     int corner = (int) modules.getSlider(scriptName, "Position");
     boolean right = corner == 0 || corner == 2;
     boolean bottom = corner == 0 || corner == 1;
@@ -243,7 +243,6 @@ void renderNotifications() {
     String tag = "RAVEN";
     String tagText = fontText(tag, fontPrefix);
     float tagTextWidth = render.getFontWidth(tagText);
-    float fontHeight = render.getFontHeight() * scale;
     float tagFontHeight = render.getFontHeight() * tagScale;
     float tagWidth = tagTextWidth * tagScale + 12.0f * uiScale;
     float tagRadius = Math.max(3.0f * uiScale, tagHeight * 0.34f);
@@ -272,8 +271,10 @@ void renderNotifications() {
         float anim = easeOutCubic(Math.min(inAnim, outAnim));
 
         String messageText = fontText(text, fontPrefix);
+        float messageScale = 0.60f * uiScale;
+        float messageFontHeight = render.getFontHeight() * messageScale;
         float messageTextWidth = render.getFontWidth(messageText);
-        float messageWidth = messageTextWidth * scale;
+        float messageWidth = messageTextWidth * messageScale;
         float width = padding + tagWidth + innerGap + messageWidth + rightGap;
         float xOffset = clamp(getNotificationOffsetX(corner), 2.0f, Math.max(2.0f, (qX2 - qX1) - width - 2.0f));
         float yOffset = clamp(getNotificationOffsetY(corner), 2.0f, Math.max(2.0f, (qY2 - qY1) - stackHeight - 2.0f));
@@ -288,7 +289,6 @@ void renderNotifications() {
             updateNotificationDrag(chatOpen && editPosition, corner, qX1, qX2, qY1, qY2, shownX, baseY, width, height, stackHeight);
             xOffset = clamp(getNotificationOffsetX(corner), 2.0f, Math.max(2.0f, (qX2 - qX1) - width - 2.0f));
             yOffset = clamp(getNotificationOffsetY(corner), 2.0f, Math.max(2.0f, (qY2 - qY1) - stackHeight - 2.0f));
-            setNotificationOffsets(corner, xOffset, yOffset);
             shownX = right ? (qX2 - width - xOffset) : (qX1 + xOffset);
             x = hiddenX + (shownX - hiddenX) * anim;
             baseY = bottom ? (qY2 - yOffset - height) : (qY1 + yOffset);
@@ -298,7 +298,7 @@ void renderNotifications() {
         float tagX = x + padding;
         float tagY = y + (height - tagHeight) / 2.0f;
         float textX = tagX + tagWidth + innerGap;
-        float textY = y + (height - fontHeight) / 2.0f + 0.45f * uiScale;
+        float textY = y + (height - messageFontHeight) / 2.0f + 0.45f * uiScale;
         float tagTextX = tagX + (tagWidth - tagTextWidth * tagScale) / 2.0f;
         float tagTextY = tagY + (tagHeight - tagFontHeight) / 2.0f;
         int accent = getThemeColor(enabledNotification ? resolveTheme() : resolveDisableTheme(), now);
@@ -307,7 +307,7 @@ void renderNotifications() {
         renderNotificationBackground(x, y, width, height, height / 2.0f, anim);
         render.roundedRect(tagX, tagY, tagX + tagWidth, tagY + tagHeight, tagRadius, multiplyAlpha(pillColor, anim));
         render.text(tagText, tagTextX, tagTextY, tagScale, multiplyAlpha(accent, anim), true);
-        render.text(messageText, textX, textY, scale, multiplyAlpha(0xFFD2D2D2, anim), true);
+        render.text(messageText, textX, textY, messageScale, multiplyAlpha(0xFFD2D2D2, anim), true);
     }
 }
 
@@ -481,27 +481,29 @@ void saveNotificationPosition() {
     }
 }
 
-void loadNotificationPosition() {
+float readNotificationPositionFloat(String key, float fallback) {
     try {
-        String brX = config.get("slinknotifs_brOffsetX");
-        String brY = config.get("slinknotifs_brOffsetY");
-        String blX = config.get("slinknotifs_blOffsetX");
-        String blY = config.get("slinknotifs_blOffsetY");
-        String trX = config.get("slinknotifs_trOffsetX");
-        String trY = config.get("slinknotifs_trOffsetY");
-        String tlX = config.get("slinknotifs_tlOffsetX");
-        String tlY = config.get("slinknotifs_tlOffsetY");
-
-        if (brX != null && !brX.isEmpty()) brOffsetX = Float.parseFloat(brX);
-        if (brY != null && !brY.isEmpty()) brOffsetY = Float.parseFloat(brY);
-        if (blX != null && !blX.isEmpty()) blOffsetX = Float.parseFloat(blX);
-        if (blY != null && !blY.isEmpty()) blOffsetY = Float.parseFloat(blY);
-        if (trX != null && !trX.isEmpty()) trOffsetX = Float.parseFloat(trX);
-        if (trY != null && !trY.isEmpty()) trOffsetY = Float.parseFloat(trY);
-        if (tlX != null && !tlX.isEmpty()) tlOffsetX = Float.parseFloat(tlX);
-        if (tlY != null && !tlY.isEmpty()) tlOffsetY = Float.parseFloat(tlY);
+        String value = config.get(key);
+        if (value == null) return fallback;
+        value = value.trim();
+        if (value.isEmpty()) return fallback;
+        float parsed = Float.parseFloat(value);
+        if (parsed <= 0.0f || parsed != parsed) return fallback;
+        return parsed;
     } catch (Exception ignored) {
     }
+    return fallback;
+}
+
+void loadNotificationPosition() {
+    brOffsetX = readNotificationPositionFloat("slinknotifs_brOffsetX", brOffsetX);
+    brOffsetY = readNotificationPositionFloat("slinknotifs_brOffsetY", brOffsetY);
+    blOffsetX = readNotificationPositionFloat("slinknotifs_blOffsetX", blOffsetX);
+    blOffsetY = readNotificationPositionFloat("slinknotifs_blOffsetY", blOffsetY);
+    trOffsetX = readNotificationPositionFloat("slinknotifs_trOffsetX", trOffsetX);
+    trOffsetY = readNotificationPositionFloat("slinknotifs_trOffsetY", trOffsetY);
+    tlOffsetX = readNotificationPositionFloat("slinknotifs_tlOffsetX", tlOffsetX);
+    tlOffsetY = readNotificationPositionFloat("slinknotifs_tlOffsetY", tlOffsetY);
 }
 
 void updateNotificationDrag(boolean chatOpen, int corner, float qX1, float qX2, float qY1, float qY2, float shownX, float shownY, float width, float height, float stackHeight) {
