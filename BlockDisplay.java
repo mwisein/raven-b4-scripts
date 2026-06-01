@@ -18,6 +18,8 @@ int defaultHudOffsetY = 14;
 
 int hudOffsetX = 0;
 int hudOffsetY = 14;
+boolean positionLoaded = false;
+boolean positionDirty = false;
 
 boolean dragging = false;
 int dragOX = 0, dragOY = 0;
@@ -26,10 +28,6 @@ boolean prevLeft = false;
 float fadeAlpha = 0.0f;
 long lastRenderMs = 0L;
 String lastCountStr = "64";
-
-boolean resetPending = false;
-long resetStartedMs = 0L;
-long resetButtonDelayMs = 50L;
 
 long rightHoldStartMs = 0L;
 boolean prevRight = false;
@@ -45,7 +43,7 @@ void onLoad() {
     modules.registerSlider("Theme", "", 0, themeOptions);
     modules.registerSlider("Scale", "x", 1.0, 0.5, 3.0, 0.1);
     modules.registerSlider("Only on RMB", "", 0, rmbOptions);
-    modules.registerButton("Reset Position", false);
+    modules.registerSlider("Grid", "px", 10, 0, 50, 1);
     loadPos();
 }
 
@@ -57,8 +55,6 @@ void onEnable() {
     fadeAlpha = 0.0f;
     lastRenderMs = 0L;
     lastCountStr = "64";
-    resetPending = false;
-    resetStartedMs = 0L;
     rightHoldStartMs = 0L;
     lastScaffoldState = false;
     wasShowingReal = false;
@@ -66,9 +62,8 @@ void onEnable() {
 }
 
 void onDisable() {
-    savePos();
+    if (dragging || positionDirty) savePos();
     dragging = false;
-    resetPending = false;
     rightHoldStartMs = 0L;
     prevRight = false;
     lastScaffoldState = false;
@@ -77,7 +72,6 @@ void onDisable() {
 }
 
 void onPreUpdate() {
-    handleResetPositionButton();
     updateRightHoldState();
 }
 
@@ -96,43 +90,34 @@ void updateRightHoldState() {
     prevRight = rightDown;
 }
 
-void handleResetPositionButton() {
-    boolean enabled = modules.getButton(scriptName, "Reset Position");
-
-    if (!enabled) {
-        resetPending = false;
-        return;
-    }
-
-    if (!resetPending) {
-        hudOffsetX = defaultHudOffsetX;
-        hudOffsetY = defaultHudOffsetY;
-        dragging = false;
-        savePos();
-        resetPending = true;
-        resetStartedMs = client.time();
-        return;
-    }
-
-    if (client.time() - resetStartedMs >= resetButtonDelayMs) {
-        modules.setButton(scriptName, "Reset Position", false);
-        resetPending = false;
-    }
-}
-
 void savePos() {
-    config.set("hudOffsetX", String.valueOf(hudOffsetX));
-    config.set("hudOffsetY", String.valueOf(hudOffsetY));
+    boolean savedX = config.set("hudOffsetX", String.valueOf(hudOffsetX));
+    boolean savedY = config.set("hudOffsetY", String.valueOf(hudOffsetY));
+    if (savedX && savedY) positionDirty = false;
 }
 
 void loadPos() {
-    hudOffsetX = defaultHudOffsetX;
-    hudOffsetY = defaultHudOffsetY;
+    int loadedX = positionLoaded ? hudOffsetX : defaultHudOffsetX;
+    int loadedY = positionLoaded ? hudOffsetY : defaultHudOffsetY;
 
     String sx = config.get("hudOffsetX");
     String sy = config.get("hudOffsetY");
-    if (sx != null && !sx.isEmpty()) hudOffsetX = Integer.parseInt(sx);
-    if (sy != null && !sy.isEmpty()) hudOffsetY = Integer.parseInt(sy);
+    if (sx != null && !sx.trim().isEmpty()) loadedX = parseIntOr(sx, loadedX);
+    if (sy != null && !sy.trim().isEmpty()) loadedY = parseIntOr(sy, loadedY);
+
+    hudOffsetX = loadedX;
+    hudOffsetY = loadedY;
+    positionLoaded = true;
+    positionDirty = false;
+}
+
+int parseIntOr(String value, int fallback) {
+    try {
+        return Integer.parseInt(value.trim());
+    } catch (Exception ignored) {
+    }
+
+    return fallback;
 }
 
 int clampInt(int v, int lo, int hi) {
@@ -141,6 +126,33 @@ int clampInt(int v, int lo, int hi) {
 
 float clampFloat(float v, float lo, float hi) {
     return v < lo ? lo : v > hi ? hi : v;
+}
+
+float snapToGrid(float value) {
+    float grid = (float) modules.getSlider(scriptName, "Grid");
+    if (grid <= 0.0f) return value;
+    if (grid < 1.0f) grid = 1.0f;
+    return Math.round(value / grid) * grid;
+}
+
+void drawHudGrid(int[] display, float x, float y, float width, float height) {
+    float grid = (float) modules.getSlider(scriptName, "Grid");
+    if (grid <= 0.0f) return;
+    if (grid < 1.0f) grid = 1.0f;
+
+    int gridColor = 0x55FFFFFF;
+    float sw = display[0];
+    float sh = display[1];
+    for (float gx = 0.0f; gx <= sw; gx += grid) render.rect(gx, 0.0f, gx + 0.5f, sh, gridColor);
+    for (float gy = 0.0f; gy <= sh; gy += grid) render.rect(0.0f, gy, sw, gy + 0.5f, gridColor);
+
+    int centerColor = 0xFFFF3333;
+    float screenCenterX = sw / 2.0f;
+    float screenCenterY = sh / 2.0f;
+    float boxCenterX = x + width / 2.0f;
+    float boxCenterY = y + height / 2.0f;
+    if (Math.abs(boxCenterX - screenCenterX) <= 0.5f) render.rect(screenCenterX - 0.5f, 0.0f, screenCenterX + 0.5f, sh, centerColor);
+    if (Math.abs(boxCenterY - screenCenterY) <= 0.5f) render.rect(0.0f, screenCenterY - 0.5f, sw, screenCenterY + 0.5f, centerColor);
 }
 
 int withAlpha(int color, int alpha) {
@@ -351,15 +363,35 @@ void onRenderTick(float partialTicks) {
         }
 
         if (dragging) {
-            hudOffsetX = (mx - dragOX) - baseX;
-            hudOffsetY = (my - dragOY) - baseY;
-            x = baseX + hudOffsetX;
-            y = baseY + hudOffsetY;
+            float rawX = clampFloat(mx - dragOX, 2.0f, Math.max(2.0f, screenW - totalW - 2.0f));
+            float rawY = clampFloat(my - dragOY, 2.0f, Math.max(2.0f, screenH - th - 2.0f));
+            float snappedX = snapToGrid(rawX);
+            float snappedY = snapToGrid(rawY);
+
+            float grid = (float) modules.getSlider(scriptName, "Grid");
+            if (grid > 0.0f) {
+                float centerSnap = Math.max(4.0f, grid);
+                float screenCenterX = screenW / 2.0f;
+                float screenCenterY = screenH / 2.0f;
+                float boxCenterX = snappedX + totalW / 2.0f;
+                float boxCenterY = snappedY + th / 2.0f;
+                if (Math.abs(boxCenterX - screenCenterX) <= centerSnap) snappedX = screenCenterX - totalW / 2.0f;
+                if (Math.abs(boxCenterY - screenCenterY) <= centerSnap) snappedY = screenCenterY - th / 2.0f;
+            }
+
+            x = (int) clampFloat(snappedX, 2.0f, Math.max(2.0f, screenW - totalW - 2.0f));
+            y = (int) clampFloat(snappedY, 2.0f, Math.max(2.0f, screenH - th - 2.0f));
+            hudOffsetX = x - baseX;
+            hudOffsetY = y - baseY;
+            positionLoaded = true;
+            positionDirty = true;
         }
     } else {
         if (dragging) savePos();
         dragging = false;
     }
+
+    if (dragging) drawHudGrid(display, x, y, totalW, th);
 
     render.text(countStr, x, y, scale, numberColor, true);
     render.text(suffix, x + nw, y, scale, suffixColor, true);
