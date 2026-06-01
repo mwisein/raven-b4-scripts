@@ -844,16 +844,9 @@ int lastSortMode = -1;
 int status = 0;
 int overlayTicks = 5;
 long overlayLastAnimAt = 0L;
-long lastEditPositionWarningMs = 0L;
 float overlayAlpha = 0.0f;
-float brOffsetX = 12.0f;
-float brOffsetY = 12.0f;
-float blOffsetX = 12.0f;
-float blOffsetY = 12.0f;
-float trOffsetX = 12.0f;
-float trOffsetY = 12.0f;
-float tlOffsetX = 12.0f;
-float tlOffsetY = 12.0f;
+boolean overlayPositionLoaded = false;
+final float overlayGrid = 3.0f;
 float overlayScale = 1.0f;
 boolean overlayDragging = false;
 boolean overlayScaling = false;
@@ -863,6 +856,8 @@ float overlayDragY = 0.0f;
 float overlayScaleStart = 1.0f;
 float overlayScaleStartX = 0.0f;
 float overlayScaleStartY = 0.0f;
+float overlayMouseX = 0.0f;
+float overlayMouseY = 0.0f;
 float headsSize = 10f;
 long lastHeadEnsureAt = 0L;
 
@@ -909,8 +904,6 @@ void registerDefaultButtons() {
     modules.registerButton("Add brackets to star", false);
     modules.registerSlider("Theme", "", 0, themeOptions);
     modules.registerSlider("Team colour", "", 0, new String[] {"Dot", "Name"});
-    modules.registerSlider("Position", "", 0, new String[] {"Bottom Right", "Bottom Left", "Top Right", "Top Left"});
-    modules.registerButton("Edit", false);
 }
 
 int getShowBindKeyCode() {
@@ -1084,27 +1077,26 @@ float readOverlayHudFloat(String key, float fallback) {
 }
 
 void loadOverlayHud() {
-    brOffsetX = readOverlayHudFloat("overlayBrX", brOffsetX);
-    brOffsetY = readOverlayHudFloat("overlayBrY", brOffsetY);
-    blOffsetX = readOverlayHudFloat("overlayBlX", blOffsetX);
-    blOffsetY = readOverlayHudFloat("overlayBlY", blOffsetY);
-    trOffsetX = readOverlayHudFloat("overlayTrX", trOffsetX);
-    trOffsetY = readOverlayHudFloat("overlayTrY", trOffsetY);
-    tlOffsetX = readOverlayHudFloat("overlayTlX", tlOffsetX);
-    tlOffsetY = readOverlayHudFloat("overlayTlY", tlOffsetY);
+    float loadedX = readOverlayHudFloat("overlayX", -1.0f);
+    float loadedY = readOverlayHudFloat("overlayY", -1.0f);
+    if (loadedX >= 0.0f && loadedY >= 0.0f) {
+        startX = loadedX;
+        startY = loadedY;
+        overlayPositionLoaded = true;
+    } else {
+        startX = -1.0f;
+        startY = -1.0f;
+        overlayPositionLoaded = false;
+    }
     overlayScale = clamp(readOverlayHudFloat("overlayScale", overlayScale), 0.55f, 1.8f);
     applyOverlayScale();
 }
 
 void saveOverlayHud() {
-    config.set("overlayBrX", String.valueOf(brOffsetX));
-    config.set("overlayBrY", String.valueOf(brOffsetY));
-    config.set("overlayBlX", String.valueOf(blOffsetX));
-    config.set("overlayBlY", String.valueOf(blOffsetY));
-    config.set("overlayTrX", String.valueOf(trOffsetX));
-    config.set("overlayTrY", String.valueOf(trOffsetY));
-    config.set("overlayTlX", String.valueOf(tlOffsetX));
-    config.set("overlayTlY", String.valueOf(tlOffsetY));
+    if (overlayPositionLoaded && startX >= 0.0f && startY >= 0.0f) {
+        config.set("overlayX", String.valueOf(startX));
+        config.set("overlayY", String.valueOf(startY));
+    }
     config.set("overlayScale", String.valueOf(overlayScale));
 }
 
@@ -1386,7 +1378,6 @@ void addPlaceholderStats(String player, String username, boolean doName) {
 void onEnable() {
     loadOverlayHud();
     overlayLastAnimAt = 0L;
-    lastEditPositionWarningMs = 0L;
     overlayAlpha = 0.0f;
     overlayDragging = false;
     overlayScaling = false;
@@ -1430,13 +1421,11 @@ void onDisable() {
     saveOverlayHud();
     saveApiKey("overlay_hypixel_key", hypixelApiKey);
     saveApiKey("overlay_urchin_key", urchinApiKey);
-    lastEditPositionWarningMs = 0L;
     overlayDragging = false;
     overlayScaling = false;
 }
 
 void onPreUpdate() {
-    printEditPositionWarningIfNeeded();
     updateStatus();
     updateBindToggle();
     updateNameHiderObfuscationState();
@@ -1785,61 +1774,20 @@ void resetOverlayAnimation(boolean visible) {
 
 boolean isChatOpen(String screen) { return screen != null && screen.toLowerCase().contains("chat"); }
 
-boolean isEditingPosition() {
-    try { return modules.getButton(scriptName, "Edit"); } catch (Exception ignored) {}
-    return false;
+float snapOverlayGrid(float value) {
+    return Math.round(value / overlayGrid) * overlayGrid;
 }
 
-void printEditPositionWarningIfNeeded() {
-    if (!isEditingPosition()) { lastEditPositionWarningMs = 0L; return; }
-    long now = client.time();
-    if (lastEditPositionWarningMs != 0L && now - lastEditPositionWarningMs < 5000L) return;
-    lastEditPositionWarningMs = now;
-    client.print(formatOverlayMessage("&8\u00bb &cEdit mode is active."));
-}
-
-int getOverlayCorner() {
-    try { return (int) modules.getSlider(scriptName, "Position"); } catch (Exception ignored) {}
-    return 0;
-}
-
-boolean isRightOverlayCorner(int corner)  { return corner == 0 || corner == 2; }
-boolean isBottomOverlayCorner(int corner) { return corner == 0 || corner == 1; }
-
-float[] getOverlayOffsets(int corner) {
-    if (corner == 0) return new float[] {brOffsetX, brOffsetY};
-    if (corner == 1) return new float[] {blOffsetX, blOffsetY};
-    if (corner == 2) return new float[] {trOffsetX, trOffsetY};
-    return new float[] {tlOffsetX, tlOffsetY};
-}
-
-void setOverlayOffsets(int corner, float x, float y) {
-    if (corner == 0) { brOffsetX = x; brOffsetY = y; }
-    else if (corner == 1) { blOffsetX = x; blOffsetY = y; }
-    else if (corner == 2) { trOffsetX = x; trOffsetY = y; }
-    else { tlOffsetX = x; tlOffsetY = y; }
-}
-
-float[] getOverlayQuadrant(int corner) {
+void applyOverlayPosition(float panelWidth, float panelHeight) {
     int[] display = client.getDisplaySize();
-    float sw = display[0], sh = display[1];
-    boolean right = isRightOverlayCorner(corner), bottom = isBottomOverlayCorner(corner);
-    return new float[] {
-        right ? sw / 2.0f : 0.0f,
-        right ? sw : sw / 2.0f,
-        bottom ? sh / 2.0f : 0.0f,
-        bottom ? sh : sh / 2.0f
-    };
-}
+    if (!overlayPositionLoaded || startX < 0.0f || startY < 0.0f) {
+        startX = 12.0f;
+        startY = 12.0f;
+        overlayPositionLoaded = true;
+    }
 
-void applyOverlayPosition(int corner, float panelWidth, float panelHeight) {
-    float[] q = getOverlayQuadrant(corner);
-    float[] offsets = getOverlayOffsets(corner);
-    boolean right = isRightOverlayCorner(corner), bottom = isBottomOverlayCorner(corner);
-    float xOffset = clamp(offsets[0], 2.0f, Math.max(2.0f, (q[1] - q[0]) - panelWidth - 2.0f));
-    float yOffset = clamp(offsets[1], 2.0f, Math.max(2.0f, (q[3] - q[2]) - panelHeight - 2.0f));
-    startX = right ? (q[1] - panelWidth - xOffset) : (q[0] + xOffset);
-    startY = bottom ? (q[3] - panelHeight - yOffset) : (q[2] + yOffset);
+    startX = clamp(startX, 2.0f, Math.max(2.0f, display[0] - panelWidth - 2.0f));
+    startY = clamp(startY, 2.0f, Math.max(2.0f, display[1] - panelHeight - 2.0f));
 }
 
 void drawRectOutline(float x1, float y1, float x2, float y2, float thickness, int color) {
@@ -1859,27 +1807,39 @@ void drawFastBloom(float x1, float y1, float x2, float y2, float anim) {
     render.roundedRect(x1 - 1.0f * unit, y1 - 1.0f * unit, x2 + 1.0f * unit, y2 + 1.0f * unit, radius + 1.0f * unit, multiplyAlpha(0x30000000, anim));
 }
 
-void drawOverlayQuadrant(int corner) {
-    float[] q = getOverlayQuadrant(corner);
-    render.rect(q[0], q[2], q[1], q[3], 0x22000000);
-    drawRectOutline(q[0] + 1.0f, q[2] + 1.0f, q[1] - 1.0f, q[3] - 1.0f, 1.0f, 0x88FFFFFF);
+void drawOverlayGrid(int[] display, float panelWidth, float panelHeight) {
+    int gridColor = 0x55FFFFFF;
+    float sw = display[0];
+    float sh = display[1];
+    for (float gx = 0.0f; gx <= sw; gx += overlayGrid) render.rect(gx, 0.0f, gx + 0.5f, sh, gridColor);
+    for (float gy = 0.0f; gy <= sh; gy += overlayGrid) render.rect(0.0f, gy, sw, gy + 0.5f, gridColor);
+
+    int centerColor = 0xFFFF3333;
+    float screenCenterX = sw / 2.0f;
+    float screenCenterY = sh / 2.0f;
+    float boxCenterX = startX + panelWidth / 2.0f;
+    float boxCenterY = startY + panelHeight / 2.0f;
+    if (Math.abs(boxCenterX - screenCenterX) <= 0.5f) render.rect(screenCenterX - 0.5f, 0.0f, screenCenterX + 0.5f, sh, centerColor);
+    if (Math.abs(boxCenterY - screenCenterY) <= 0.5f) render.rect(0.0f, screenCenterY - 0.5f, sw, screenCenterY + 0.5f, centerColor);
 }
 
 boolean isMouseInside(float mouseX, float mouseY, float x1, float y1, float x2, float y2) {
     return mouseX >= x1 && mouseX <= x2 && mouseY >= y1 && mouseY <= y2;
 }
 
-boolean handleOverlayInteraction(boolean chatOpen, boolean editPosition, int corner, float panelWidth, float panelHeight) {
+boolean handleOverlayInteraction(boolean chatOpen, float panelWidth, float panelHeight) {
     int[] display = client.getDisplaySize();
     int scale = Math.max(1, display[2]);
     int[] mp = keybinds.getMousePosition();
     float mouseX = mp[0] / (float) scale;
     float mouseY = display[1] - (mp[1] / (float) scale);
+    overlayMouseX = mouseX;
+    overlayMouseY = mouseY;
     boolean leftDown = keybinds.isMouseDown(0);
     boolean leftJust = leftDown && !overlayPrevLeft;
     overlayPrevLeft = leftDown;
 
-    if (!chatOpen || !editPosition) {
+    if (!chatOpen) {
         if (overlayDragging || overlayScaling) saveOverlayHud();
         overlayDragging = false;
         overlayScaling = false;
@@ -1887,7 +1847,6 @@ boolean handleOverlayInteraction(boolean chatOpen, boolean editPosition, int cor
     }
 
     boolean changed = false;
-    float[] q = getOverlayQuadrant(corner);
     float handleSize = Math.max(11.0f, 13.0f * overlayScale);
     float handleX1 = startX + panelWidth - handleSize - 4.0f;
     float handleY1 = startY + panelHeight - handleSize - 4.0f;
@@ -1914,15 +1873,22 @@ boolean handleOverlayInteraction(boolean chatOpen, boolean editPosition, int cor
     }
 
     if (overlayDragging) {
-        boolean right = isRightOverlayCorner(corner), bottom = isBottomOverlayCorner(corner);
-        float targetX = clamp(mouseX - overlayDragX, q[0] + 2.0f, q[1] - panelWidth - 2.0f);
-        float targetY = clamp(mouseY - overlayDragY, q[2] + 2.0f, q[3] - panelHeight - 2.0f);
-        float nextXOffset = right ? (q[1] - panelWidth - targetX) : (targetX - q[0]);
-        float nextYOffset = bottom ? (q[3] - panelHeight - targetY) : (targetY - q[2]);
-        nextXOffset = clamp(nextXOffset, 2.0f, Math.max(2.0f, (q[1] - q[0]) - panelWidth - 2.0f));
-        nextYOffset = clamp(nextYOffset, 2.0f, Math.max(2.0f, (q[3] - q[2]) - panelHeight - 2.0f));
-        setOverlayOffsets(corner, nextXOffset, nextYOffset);
-        applyOverlayPosition(corner, panelWidth, panelHeight);
+        float targetX = clamp(mouseX - overlayDragX, 2.0f, Math.max(2.0f, display[0] - panelWidth - 2.0f));
+        float targetY = clamp(mouseY - overlayDragY, 2.0f, Math.max(2.0f, display[1] - panelHeight - 2.0f));
+        float snappedX = snapOverlayGrid(targetX);
+        float snappedY = snapOverlayGrid(targetY);
+
+        float centerSnap = Math.max(4.0f, overlayGrid);
+        float screenCenterX = display[0] / 2.0f;
+        float screenCenterY = display[1] / 2.0f;
+        float boxCenterX = snappedX + panelWidth / 2.0f;
+        float boxCenterY = snappedY + panelHeight / 2.0f;
+        if (Math.abs(boxCenterX - screenCenterX) <= centerSnap) snappedX = screenCenterX - panelWidth / 2.0f;
+        if (Math.abs(boxCenterY - screenCenterY) <= centerSnap) snappedY = screenCenterY - panelHeight / 2.0f;
+
+        startX = clamp(snappedX, 2.0f, Math.max(2.0f, display[0] - panelWidth - 2.0f));
+        startY = clamp(snappedY, 2.0f, Math.max(2.0f, display[1] - panelHeight - 2.0f));
+        overlayPositionLoaded = true;
         changed = true;
     }
 
@@ -1938,8 +1904,8 @@ boolean handleOverlayInteraction(boolean chatOpen, boolean editPosition, int cor
 
 void drawOverlayScaleHandle(float panelWidth, float panelHeight, int accent, float anim) {
     float handleSize = Math.max(11.0f, 13.0f * overlayScale);
-    float x1 = startX + panelWidth - handleSize - 4.0f;
-    float y1 = startY + panelHeight - handleSize - 4.0f;
+    float x1 = overlayScaling ? overlayMouseX - handleSize / 2.0f : startX + panelWidth - handleSize - 4.0f;
+    float y1 = overlayScaling ? overlayMouseY - handleSize / 2.0f : startY + panelHeight - handleSize - 4.0f;
     float x2 = x1 + handleSize, y2 = y1 + handleSize;
     render.rect(x1, y1, x2, y2, multiplyAlpha(0xCC14161A, anim));
     drawRectOutline(x1, y1, x2, y2, Math.max(1.0f, 1.0f * overlayScale), multiplyAlpha(0xCCB8BEC4, anim));
@@ -2365,26 +2331,23 @@ void onRenderTick(float partialTicks) {
 
     String screen = client.getScreen();
     boolean chatOpen = isChatOpen(screen);
-    boolean editPosition = isEditingPosition();
-    boolean previewMode = chatOpen && editPosition;
+    boolean userWantsOverlay = isOverlayVisible();
+    boolean previewMode = chatOpen && userWantsOverlay;
     boolean otherScreenOpen = screen != null && !screen.isEmpty() && !chatOpen;
     if (otherScreenOpen) { resetOverlayAnimation(false); return; }
 
     boolean targetVisible = !otherScreenOpen && overlayTicks >= 5 && columns.size() > 0
-        && ((currentPlayers.size() > 0 && isOverlayVisible()) || previewMode);
+        && currentPlayers.size() > 0 && userWantsOverlay;
 
     float anim = updateOverlayAnimation(targetVisible);
     if (anim <= 0.0f) return;
 
-    int corner = getOverlayCorner();
     int accent = 0xFFB8BEC4;
-
-    if (previewMode) drawOverlayQuadrant(corner);
 
     float panelWidth  = Math.max(1.0f, endX - startX);
     float panelHeight = Math.max(1.0f, endY - startY);
     float beforeX = startX, beforeY = startY;
-    applyOverlayPosition(corner, panelWidth, panelHeight);
+    applyOverlayPosition(panelWidth, panelHeight);
     boolean positionChanged = Math.abs(beforeX - startX) > 0.05f || Math.abs(beforeY - startY) > 0.05f;
 
     if (overlayNeedsLayout || positionChanged) {
@@ -2393,7 +2356,7 @@ void onRenderTick(float partialTicks) {
         panelWidth  = Math.max(1.0f, endX - startX);
         panelHeight = Math.max(1.0f, endY - startY);
         beforeX = startX; beforeY = startY;
-        applyOverlayPosition(corner, panelWidth, panelHeight);
+        applyOverlayPosition(panelWidth, panelHeight);
         if (Math.abs(beforeX - startX) > 0.05f || Math.abs(beforeY - startY) > 0.05f) {
             doColumns();
             panelWidth  = Math.max(1.0f, endX - startX);
@@ -2401,13 +2364,14 @@ void onRenderTick(float partialTicks) {
         }
     }
 
-    if (handleOverlayInteraction(chatOpen, editPosition, corner, panelWidth, panelHeight)) {
-        applyOverlayPosition(corner, panelWidth, panelHeight);
+    if (handleOverlayInteraction(chatOpen, panelWidth, panelHeight)) {
+        applyOverlayPosition(panelWidth, panelHeight);
         doColumns();
         overlayNeedsLayout = false;
         panelWidth  = Math.max(1.0f, endX - startX);
         panelHeight = Math.max(1.0f, endY - startY);
     }
+    boolean drawGrid = overlayDragging;
 
     float drawStartY = startY - (1.0f - anim) * 8.0f * textScale;
     float drawEndY   = endY   - (1.0f - anim) * 8.0f * textScale;
@@ -2415,6 +2379,7 @@ void onRenderTick(float partialTicks) {
     boolean bloomEnabled = false;
     try { bloomEnabled = modules.getButton(scriptName, "Bloom"); } catch (Exception ignored) {}
     if (bloomEnabled && anim > 0.02f) drawFastBloom(startX, drawStartY, endX, drawEndY, anim);
+    if (drawGrid) drawOverlayGrid(client.getDisplaySize(), panelWidth, panelHeight);
 
     drawTableShell(startX, drawStartY, panelWidth, panelHeight, accent, anim);
     drawColumnSections(drawStartY, panelHeight, accent, anim);
