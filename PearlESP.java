@@ -14,7 +14,7 @@ String[] settingsThemeMap = {
 };
 
 void onLoad() {
-    modules.registerDescription("Displays pearl trajectorie.");
+    modules.registerDescription("Trajectories for pearls.");
     modules.registerSlider("Theme",           "", 0, themeOptions);
     modules.registerSlider("Line width",      "px", 1.5, 0.5, 3.0, 0.5);
     modules.registerButton("Outline block",   true);
@@ -108,6 +108,7 @@ int themeColorDim(int alpha) {
 
 double DRAG    = 0.99;
 double GRAVITY = 0.03;
+int TRAJECTORY_SUBSTEPS = 8;
 
 boolean isSolid(int x, int y, int z) {
     Block block = world.getBlockAt(x, y, z);
@@ -123,11 +124,21 @@ Vec3 simulateLanding(Vec3 pos, Vec3 vel) {
     double px = pos.x, py = pos.y, pz = pos.z;
     double vx = vel.x, vy = vel.y, vz = vel.z;
     for (int step = 0; step < 300; step++) {
+        double sx = px, sy = py, sz = pz;
         vx *= DRAG; vy *= DRAG; vz *= DRAG;
         vy -= GRAVITY;
         double nx = px+vx, ny = py+vy, nz = pz+vz;
-        if (isSolid((int)Math.floor(nx), (int)Math.floor(ny), (int)Math.floor(nz)))
-            return new Vec3((int)Math.floor(nx), (int)Math.floor(ny), (int)Math.floor(nz));
+
+        for (int sub = 1; sub <= TRAJECTORY_SUBSTEPS; sub++) {
+            double t = sub / (double) TRAJECTORY_SUBSTEPS;
+            double cx = sx + (nx - sx) * t;
+            double cy = sy + (ny - sy) * t;
+            double cz = sz + (nz - sz) * t;
+            if (isSolid((int)Math.floor(cx), (int)Math.floor(cy), (int)Math.floor(cz)))
+                return new Vec3((int)Math.floor(cx), (int)Math.floor(cy), (int)Math.floor(cz));
+            if (cy < -64) return null;
+        }
+
         if (ny < -64) return null;
         px = nx; py = ny; pz = nz;
     }
@@ -140,18 +151,66 @@ List<Vec3> buildTrajectory(Vec3 pos, Vec3 vel) {
     double vx = vel.x, vy = vel.y, vz = vel.z;
     pts.add(new Vec3(px, py, pz));
     for (int step = 0; step < 300; step++) {
+        double sx = px, sy = py, sz = pz;
         vx *= DRAG; vy *= DRAG; vz *= DRAG;
         vy -= GRAVITY;
         double nx = px+vx, ny = py+vy, nz = pz+vz;
-        if (isSolid((int)Math.floor(nx), (int)Math.floor(ny), (int)Math.floor(nz))) {
-            pts.add(new Vec3(nx, ny, nz));
-            break;
+
+        for (int sub = 1; sub <= TRAJECTORY_SUBSTEPS; sub++) {
+            double t = sub / (double) TRAJECTORY_SUBSTEPS;
+            double cx = sx + (nx - sx) * t;
+            double cy = sy + (ny - sy) * t;
+            double cz = sz + (nz - sz) * t;
+
+            pts.add(new Vec3(cx, cy, cz));
+            if (isSolid((int)Math.floor(cx), (int)Math.floor(cy), (int)Math.floor(cz))) {
+                return pts;
+            }
+            if (cy < -64) return pts;
         }
+
         if (ny < -64) break;
-        if (step % 2 == 0) pts.add(new Vec3(nx, ny, nz));
         px = nx; py = ny; pz = nz;
     }
     return pts;
+}
+
+void drawSmoothTrajectory(List<Vec3> pts, float lineWidth, float alpha) {
+    if (pts == null || pts.size() < 2) return;
+
+    Vec3 cam = render.getPosition();
+    if (cam == null) return;
+
+    int base = getThemeColor(resolveTheme());
+    int r = (base >> 16) & 0xFF;
+    int g = (base >> 8) & 0xFF;
+    int b = base & 0xFF;
+    int sz = pts.size();
+
+    gl.push();
+    gl.blend(true);
+    gl.texture2d(false);
+    gl.lineSmooth(true);
+    gl.depth(false);
+    gl.lineWidth(lineWidth);
+    gl.translate(-cam.x, -cam.y, -cam.z);
+    gl.begin(3);
+
+    for (int i = 0; i < sz; i++) {
+        float frac = (float) i / Math.max(1, sz - 1);
+        int a = clampInt((int)(alpha * (255 - frac * 180)), 0, 255);
+        gl.color(r, g, b, a);
+        Vec3 p = pts.get(i);
+        gl.vertex3(p.x, p.y, p.z);
+    }
+
+    gl.end();
+    gl.lineSmooth(false);
+    gl.texture2d(true);
+    gl.depth(true);
+    gl.blend(false);
+    gl.resetColor();
+    gl.pop();
 }
 
 
@@ -219,14 +278,7 @@ void onRenderWorld(float partialTicks) {
 
         if (showTrail) {
             List<Vec3> pts = cachedTrajectory.get(id);
-            if (pts != null && pts.size() > 1) {
-                int sz = pts.size();
-                for (int i = 0; i < sz - 1; i++) {
-                    float frac = (float) i / Math.max(1, sz - 1);
-                    int lineAlpha = (int)(fa * (255 - frac * 180));
-                    render.line3D(pts.get(i), pts.get(i+1), lineWidth, themeColor(lineAlpha));
-                }
-            }
+            drawSmoothTrajectory(pts, lineWidth, fa);
         }
 
         if (showBlock) {
