@@ -37,17 +37,17 @@ static final int BLOOM_SHADOW_L2 = 0x1C000000;
 static final int BLOOM_SHADOW_L1 = 0x30000000;
 
 void onLoad() {
-    setDataSlider("AutoClicker", "AutoClicker", "%v1", new String[]{"Min CPS", "Max CPS"});
+    setDataSlider("AutoClicker", "Auto Clicker", "%v1.0c/s", new String[]{"Min CPS", "Max CPS"});
     setDataSlider("Fake Lag", "Fake Lag", "%v1ms", new String[]{"Outbound delay"});
+    setDataSlider("Displace", "KB Displacement", "%v1\u00B0", new String[]{"Angle"});
     setDataSlider("Timer", "Timer", "%v1x", new String[]{"Slider B"});
     setDataSlider("Hitbox", "Hit Box", "%v1x", new String[]{"Multiplier"});
-    setDataArray("KillAura", "KillAura", "Targets", new String[]{"Silent"});
+    setDataArray("KillAura", "KillAura", "Targets", new String[]{"Switch"});
     setDataSlider("AntiKnockback", "KB Delay", "%v1ms", new String[]{"Delay"});
-    setDataSlider("Backtrack", "", "%v1ms", new String[]{"Delay"});
+    setDataSlider("Backtrack", "Back Track", "%v1ms", new String[]{"Delay"});
     setDataSlider("FastMine", "Fast Mine", "%v1x", new String[]{"Break speed"});
     setDataArray("NoSlow", "No Slow", "", new String[]{""});
     setDataArray("BedAura", "Nuker", "Break mode", new String[]{"Legit", "Instant", "Swap"});
-    setDataSlider("Lag Range", "Lag Range", "%v1ms", new String[]{"Packet delay (far)"});
     setDataSlider("Hit Select", "", "%v1ms", new String[]{"Pause"});
     setDataStatic("GhostHand", "Piercing", "");
     setDataStatic("AimAssist", "Aim Assist", "Lock");
@@ -56,8 +56,12 @@ void onLoad() {
     setDataStatic("Jump Reset", "Velocity", "Jump");
     setDataStatic("FastPlace", "Fast Place", "");
     setDataStatic("AutoTool", "Auto Tool", "");
-    setDataStatic("Displace", "KB Displacement", "110\u00B0");
+    setDataStatic("AutoBlockin", "Block-In", "");
     setDataStatic("Stasis", "", "");
+    setDataStatic("AutoSort", "Inv Manager", "");
+    setDataStatic("JumpVelo", "Velocity", "Jump");
+    setDataStatic("MoreKB", "", "Legit");
+    setDataStatic("TimerRange", "Timer Range", "");
 
     modules.registerDescription("GPTed. by @mwisein");
     modules.registerSlider("Background", "", 255, 0, 255, 1);
