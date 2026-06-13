@@ -38,6 +38,7 @@ long lastEditPositionWarningMs = 0L;
 void onLoad() {
     modules.registerDescription("Slinky inspired notifications.");
     modules.registerButton("Start with {f}", true);
+    modules.registerButton("Sync hud2", true);
     modules.registerSlider("Theme", "", 0, themeOptions);
     modules.registerSlider("Disable theme", "", 0, disableThemeOptions);
     modules.registerSlider("Duration", "ms", 3000, 1000, 7000, 100);
@@ -139,10 +140,24 @@ void syncModuleStates() {
 String buildMessage(String firstName, int count, boolean enabled) {
     String prefix = enabled ? "Enabled " : "Disabled ";
     if (count == 1) {
-        return prefix + firstName;
+        return prefix + aliasFor(firstName);
     }
 
     return prefix + count + " mods";
+}
+
+String aliasFor(String moduleName) {
+    if (!modules.getButton(scriptName, "Sync hud2")) return moduleName;
+    try {
+        Object obj = bridge.get("moduleAliases");
+        if (obj instanceof Map) {
+            Map aliasMap = (Map) obj;
+            Object alias = aliasMap.get(moduleName);
+            if (alias != null && !alias.toString().isEmpty()) return alias.toString();
+        }
+    } catch (Exception ignored) {
+    }
+    return moduleName;
 }
 
 void pushNotification(String text, boolean enabled) {
@@ -452,6 +467,7 @@ float getNotificationOffsetY(int corner) {
 }
 
 void setNotificationOffsets(int corner, float x, float y) {
+    notifPositionLoaded = true;
     if (corner == 0) {
         brOffsetX = x;
         brOffsetY = y;
@@ -467,7 +483,27 @@ void setNotificationOffsets(int corner, float x, float y) {
     }
 }
 
+boolean notifPositionLoaded = false;
+
+boolean notifConfigPresent() {
+    String[] keys = {
+        "slinknotifs_brOffsetX", "slinknotifs_brOffsetY",
+        "slinknotifs_blOffsetX", "slinknotifs_blOffsetY",
+        "slinknotifs_trOffsetX", "slinknotifs_trOffsetY",
+        "slinknotifs_tlOffsetX", "slinknotifs_tlOffsetY"
+    };
+    for (String key : keys) {
+        try {
+            String value = config.get(key);
+            if (value != null && !value.trim().isEmpty()) return true;
+        } catch (Exception ignored) {
+        }
+    }
+    return false;
+}
+
 void saveNotificationPosition() {
+    if (!notifPositionLoaded) return;
     try {
         config.set("slinknotifs_brOffsetX", String.valueOf(brOffsetX));
         config.set("slinknotifs_brOffsetY", String.valueOf(brOffsetY));
@@ -504,6 +540,7 @@ void loadNotificationPosition() {
     trOffsetY = readNotificationPositionFloat("slinknotifs_trOffsetY", trOffsetY);
     tlOffsetX = readNotificationPositionFloat("slinknotifs_tlOffsetX", tlOffsetX);
     tlOffsetY = readNotificationPositionFloat("slinknotifs_tlOffsetY", tlOffsetY);
+    if (notifConfigPresent()) notifPositionLoaded = true;
 }
 
 void updateNotificationDrag(boolean chatOpen, int corner, float qX1, float qX2, float qY1, float qY2, float shownX, float shownY, float width, float height, float stackHeight) {
