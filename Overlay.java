@@ -848,6 +848,7 @@ float overlayAlpha = 0.0f;
 boolean overlayPositionLoaded = false;
 final float overlayGrid = 3.0f;
 float overlayScale = 1.0f;
+boolean overlayScaleLoaded = false;
 boolean overlayDragging = false;
 boolean overlayScaling = false;
 boolean overlayPrevLeft = false;
@@ -1088,7 +1089,12 @@ void loadOverlayHud() {
         startY = -1.0f;
         overlayPositionLoaded = false;
     }
-    overlayScale = clamp(readOverlayHudFloat("overlayScale", overlayScale), 0.55f, 1.8f);
+    String scaleRaw = null;
+    try { scaleRaw = config.get("overlayScale"); } catch (Exception ignored) {}
+    if (scaleRaw != null && !scaleRaw.trim().isEmpty()) {
+        overlayScale = clamp(readOverlayHudFloat("overlayScale", overlayScale), 0.55f, 1.8f);
+        overlayScaleLoaded = true;
+    }
     applyOverlayScale();
 }
 
@@ -1097,7 +1103,7 @@ void saveOverlayHud() {
         config.set("overlayX", String.valueOf(startX));
         config.set("overlayY", String.valueOf(startY));
     }
-    config.set("overlayScale", String.valueOf(overlayScale));
+    if (overlayScaleLoaded) config.set("overlayScale", String.valueOf(overlayScale));
 }
 
 boolean isInOverlay(String uuid) { return overlayPlayers.containsKey(uuid); }
@@ -1895,6 +1901,7 @@ boolean handleOverlayInteraction(boolean chatOpen, float panelWidth, float panel
     if (overlayScaling) {
         float delta = ((mouseX - overlayScaleStartX) + (overlayScaleStartY - mouseY)) / 220.0f;
         overlayScale = clamp(overlayScaleStart + delta, 0.55f, 1.8f);
+        overlayScaleLoaded = true;
         applyOverlayScale();
         changed = true;
     }
