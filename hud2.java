@@ -29,7 +29,23 @@ boolean animate;
 boolean lineEnabled;
 boolean bloomEnabled;
 boolean invertGradient;
+boolean lagRangeIndicator;
 float backgroundRounding;
+float lagRangeFade = 0f;
+long lagRangeFadeLast = 0L;
+float lagRangeNoise = 1f;
+float lagRangeNoiseTarget = 1f;
+float lagRangeSpeedMult = 1f;
+long lagRangeNoiseNext = 0L;
+boolean lagRangeNoiseHigh = true;
+float lagRangeMovement = 0f;
+float lagRangeSfxNoise = 1f;
+float lagRangeSfxNoiseTarget = 1f;
+float lagRangeSfxSpeedMult = 1f;
+long lagRangeSfxNoiseNext = 0L;
+boolean lagRangeSfxNoiseHigh = true;
+String lagRangeRangeSetting = null;
+boolean lagRangeRangeResolved = false;
 
 static final int BLOOM_SHADOW_L4 = 0x08000000;
 static final int BLOOM_SHADOW_L3 = 0x12000000;
@@ -38,13 +54,14 @@ static final int BLOOM_SHADOW_L1 = 0x30000000;
 
 void onLoad() {
     setDataSlider("AutoClicker", "Auto Clicker", "%v1.0c/s", new String[]{"Min CPS", "Max CPS"});
+    setDataSlider("Lag Range", "", "%v1ms", new String[]{"Packet delay (close)"});
     setDataSlider("Fake Lag", "Fake Lag", "%v1ms", new String[]{"Outbound delay"});
     setDataSlider("Displace", "KB Displacement", "%v1\u00B0", new String[]{"Angle"});
     setDataSlider("Timer", "Timer", "%v1x", new String[]{"Slider B"});
     setDataSlider("Hitbox", "Hit Box", "%v1x", new String[]{"Multiplier"});
     setDataArray("KillAura", "KillAura", "Targets", new String[]{"Switch"});
     setDataSlider("AntiKnockback", "KB Delay", "%v1ms", new String[]{"Delay"});
-    setDataSlider("Backtrack", "Back Track", "%v1ms", new String[]{"Delay"});
+    //setDataSlider("BackTrack", "Back Track", "%v1ms", new String[]{"Delay"});
     setDataSlider("FastMine", "Fast Mine", "%v1x", new String[]{"Break speed"});
     setDataArray("NoSlow", "No Slow", "", new String[]{""});
     setDataArray("BedAura", "Nuker", "Break mode", new String[]{"Legit", "Instant", "Swap"});
@@ -57,11 +74,13 @@ void onLoad() {
     setDataStatic("FastPlace", "Fast Place", "");
     setDataStatic("AutoTool", "Auto Tool", "");
     setDataStatic("AutoBlockin", "Block-In", "");
+    setDataArray("MoreKB", "More KB", "Mode", new String[]{"Legit", "LegitFast"});
     setDataStatic("Stasis", "", "");
     setDataStatic("AutoSort", "Inv Manager", "");
     setDataStatic("JumpVelo", "Velocity", "Jump");
-    setDataStatic("MoreKB", "", "Legit");
     setDataStatic("TimerRange", "Timer Range", "");
+    //setDataStatic("BackTrack", "Back Track", "");
+    setDataStatic("Scaffold", "Scaffold Walk", "");
 
     modules.registerDescription("GPTed. by @mwisein");
     modules.registerSlider("Background", "", 255, 0, 255, 1);
@@ -75,8 +94,10 @@ void onLoad() {
     modules.registerButton("Invert gradient", false);
     modules.registerButton("Lowercase", true);
     modules.registerButton("Text shadow", true);
-    modules.registerButton("Start With {f}", true);
+    modules.registerButton("Start with {f}", true);
+    modules.registerButton("Indicate lag range", false);
 }
+
 
 void setDataStatic(String moduleName, String alias, String overrideValue) {
     Map<String, Object> customData = new HashMap<>();
@@ -187,6 +208,7 @@ void onDisable() {
 void updateHudState() {
     resetTicks++;
     updateEnabledModules();
+    updateLagRangeState();
     lineGap = 1f;
 
     if (resetTicks == 1 || resetTicks % 5 == 0) {
@@ -196,12 +218,13 @@ void updateHudState() {
 
 void updateSliders() {
     lowercase          = modules.getButton(scriptName, "Lowercase");
-    autoStartWithF     = modules.getButton(scriptName, "Start With {f}");
+    autoStartWithF     = modules.getButton(scriptName, "Start with {f}");
     textShadow         = modules.getButton(scriptName, "Text shadow");
     animate            = modules.getButton(scriptName, "Animate");
     lineEnabled        = modules.getButton(scriptName, "Line");
     bloomEnabled       = modules.getButton(scriptName, "Bloom");
     invertGradient     = modules.getButton(scriptName, "Invert gradient");
+    lagRangeIndicator    = modules.getButton(scriptName, "Indicate lag range");
     backgroundRounding = (float) modules.getSlider(scriptName, "Rounding");
     textScale          = (float) modules.getSlider(scriptName, "Scale");
     activeTheme        = resolveTheme().toLowerCase().trim();
@@ -211,7 +234,19 @@ void updateSliders() {
         updateCustomData(customData);
     }
 
+    publishAliases();
     sortModules();
+}
+
+void publishAliases() {
+    Map<String, String> aliasMap = new HashMap<>();
+    for (String moduleName : customModuleData.keySet()) {
+        Map<String, String> data = customModuleData.get(moduleName);
+        if (data == null) continue;
+        String alias = data.get("alias");
+        if (alias != null && !alias.isEmpty()) aliasMap.put(moduleName, alias);
+    }
+    bridge.add("moduleAliases", aliasMap);
 }
 
 void onRenderTick(float partialTicks) {
@@ -267,9 +302,11 @@ void onRenderTick(float partialTicks) {
         entry.put("alpha", animProgress);
         entry.put("exiting", exiting);
         entry.put("index", index);
-        entry.put("color", getColorForIndex(invertGradient ? 0L : index, now));
+        int entryColor = getColorForIndex(invertGradient ? 0L : index, now);
+        entry.put("color", entryColor);
         entry.put("renderedName", renderedName);
         entry.put("renderedValue", renderedValue);
+        entry.put("moduleName", moduleName);
         renderEntries.add(entry);
 
         index -= (long) (100f * scale);
@@ -292,9 +329,11 @@ void onRenderTick(float partialTicks) {
         entry.put("alpha", 1f);
         entry.put("exiting", false);
         entry.put("index", 0L);
-        entry.put("color", getColorForIndex(0L, now));
+        int entryColor = getColorForIndex(0L, now);
+        entry.put("color", entryColor);
         entry.put("renderedName", preview);
         entry.put("renderedValue", "");
+        entry.put("moduleName", "RavenArray");
         renderEntries.add(entry);
     }
 
@@ -377,7 +416,8 @@ void onRenderTick(float partialTicks) {
         float alpha = ((Number) entry.get("alpha")).floatValue();
         int rowColor = applyAlpha(((Number) entry.get("color")).intValue(), alpha);
 
-        renderPerCharacterText(renderedName, renderedValue, finalXPosition, y1 + getTextYOffset(rowHeight, scale), scale, baseIndex, autoStartWithF, alpha, now);
+        String moduleName = (String) entry.get("moduleName");
+        renderPerCharacterText(moduleName, renderedName, renderedValue, finalXPosition, y1 + getTextYOffset(rowHeight, scale), scale, baseIndex, autoStartWithF, alpha, now);
 
         if (lineEnabled) {
             float edgeExtend = backgroundRounding > 0.05f ? Math.max(1.0f, 1.2f * textScale) : 0.0f;
@@ -681,12 +721,13 @@ int lerpColor(int c1, int c2, double t) {
     return 0xFF000000 | (r << 16) | (g << 8) | b;
 }
 
-void renderPerCharacterText(String nameText, String valueText, float x, float y, float scale, long baseIndex, boolean useFormatPrefix, float alpha, long now) {
+void renderPerCharacterText(String moduleName, String nameText, String valueText, float x, float y, float scale, long baseIndex, boolean useFormatPrefix, float alpha, long now) {
     String formatPrefix = useFormatPrefix ? "{f}" : "";
     float currentX = x;
     long characterStep = invertGradient ? 145L : 15L;
     int visibleIndex = 0;
     char colorChar = util.colorSymbol.isEmpty() ? '\0' : util.colorSymbol.charAt(0);
+    boolean isLagRange = "Lag Range".equalsIgnoreCase(moduleName);
 
     for (int i = 0; i < nameText.length(); i++) {
         char c = nameText.charAt(i);
@@ -696,15 +737,28 @@ void renderPerCharacterText(String nameText, String valueText, float x, float y,
         }
         String charText = formatPrefix + c;
         long colorIndex = invertGradient ? -((long) visibleIndex * characterStep) : baseIndex - (long) visibleIndex * characterStep;
-        int characterColor = applyAlpha(getColorForIndex(colorIndex, now), alpha);
+        int characterColor;
+        if (isLagRange && lagRangeIndicator) {
+            characterColor = getLagRangeColor(getColorForIndex(colorIndex, now), alpha);
+        } else {
+            characterColor = applyAlpha(getColorForIndex(colorIndex, now), alpha);
+        }
         render.text(charText, currentX, y, scale, characterColor, textShadow);
         currentX += render.getFontWidth(charText) * scale;
         visibleIndex++;
     }
 
     if (!valueText.isEmpty()) {
-        String suffixText = formatPrefix + " " + util.colorSymbol + "7" + valueText;
-        render.text(suffixText, currentX, y, scale, applyAlpha(0xFFFFFFFF, alpha), textShadow);
+        float lagMix = getLagRangeSuffixMix();
+        if (isLagRange && lagRangeIndicator && lagMix > 0.001f) {
+            String suffixText = formatPrefix + " " + valueText;
+            int suffixColor = applyAlpha(lerpColor(0xFFAAAAAA, 0xFFD97070, lagMix * 0.6f), alpha);
+            render.text(suffixText, currentX, y, scale, suffixColor, textShadow);
+        } else {
+            String suffixText = formatPrefix + " " + util.colorSymbol + "7" + valueText;
+            int suffixColor = applyAlpha(0xFFFFFFFF, alpha);
+            render.text(suffixText, currentX, y, scale, suffixColor, textShadow);
+        }
     }
 }
 
@@ -728,6 +782,225 @@ float getPerCharacterTextWidth(String nameText, String valueText, boolean useFor
     }
 
     return width;
+}
+
+void updateLagRangeState() {
+    long now = client.time();
+    float targetFade = 0f;
+    if (lagRangeIndicator && modules.isEnabled("Lag Range")) {
+        targetFade = getLagRangeTargetCloseness();
+    }
+
+    if (lagRangeFadeLast == 0L) lagRangeFadeLast = now;
+    float elapsed = (now - lagRangeFadeLast) / 250f;
+    lagRangeFadeLast = now;
+    if (elapsed < 0f) elapsed = 0f;
+    if (elapsed > 1f) elapsed = 1f;
+
+    float movement = 0f;
+    Entity player = client.getPlayer();
+    if (player != null) {
+        movement = (float) (player.getBPS() / 8.0);
+        if (movement > 1f) movement = 1f;
+    }
+    lagRangeMovement += (movement - lagRangeMovement) * Math.min(1f, elapsed * 5f);
+
+    if (now >= lagRangeNoiseNext) {
+        float calm = 1f - lagRangeMovement;
+        float holdScale = 1f + calm * 0.9f;
+        int dipChance = 6 + (int) (lagRangeMovement * 14f);
+        if (lagRangeNoiseHigh && util.randomInt(0, 99) < dipChance) {
+            lagRangeNoiseHigh = false;
+            lagRangeNoiseNext = now + util.randomInt(60, 150);
+            lagRangeNoiseTarget = (float) util.randomDouble(0.0, 0.1);
+        } else {
+            lagRangeNoiseHigh = true;
+            lagRangeNoiseNext = now + (long) (util.randomInt(180, 480) * holdScale);
+            lagRangeNoiseTarget = (float) util.randomDouble(0.5, 1.0);
+        }
+        lagRangeSpeedMult = (float) util.randomDouble(0.7, 1.4);
+    }
+
+    if (now >= lagRangeSfxNoiseNext) {
+        float calm = 1f - lagRangeMovement;
+        float holdScale = 1f + calm * 0.6f;
+        int dipChance = 40 + (int) (lagRangeMovement * 25f);
+        if (lagRangeSfxNoiseHigh && util.randomInt(0, 99) < dipChance) {
+            lagRangeSfxNoiseHigh = false;
+            lagRangeSfxNoiseNext = now + (long) (util.randomInt(180, 420) * holdScale);
+            lagRangeSfxNoiseTarget = (float) util.randomDouble(0.0, 0.1);
+        } else {
+            lagRangeSfxNoiseHigh = true;
+            lagRangeSfxNoiseNext = now + (long) (util.randomInt(250, 600) * holdScale);
+            lagRangeSfxNoiseTarget = (float) util.randomDouble(0.75, 1.0);
+        }
+        lagRangeSfxSpeedMult = (float) util.randomDouble(0.7, 1.4);
+    }
+
+    if (targetFade <= 0f && lagRangeFade <= 0f) {
+        lagRangeNoise = 1f;
+        lagRangeNoiseTarget = 1f;
+        lagRangeNoiseHigh = true;
+        lagRangeNoiseNext = now;
+        lagRangeSfxNoise = 1f;
+        lagRangeSfxNoiseTarget = 1f;
+        lagRangeSfxNoiseHigh = true;
+        lagRangeSfxNoiseNext = now + util.randomInt(40, 200);
+    }
+
+    float step = elapsed * lagRangeSpeedMult;
+    lagRangeNoise += (lagRangeNoiseTarget - lagRangeNoise) * Math.min(1f, step * (5f + lagRangeMovement * 5f));
+
+    float sfxStep = elapsed * lagRangeSfxSpeedMult;
+    lagRangeSfxNoise += (lagRangeSfxNoiseTarget - lagRangeSfxNoise) * Math.min(1f, sfxStep * (2.2f + lagRangeMovement * 1.8f));
+
+    if (lagRangeFade < targetFade) {
+        lagRangeFade = Math.min(targetFade, lagRangeFade + step);
+    } else {
+        lagRangeFade = Math.max(targetFade, lagRangeFade - step);
+    }
+}
+
+float getLagRangeMix() {
+    float presence = getLagRangeGate(lagRangeFade);
+    float blink = (lagRangeNoise - 0.15f) / 0.15f;
+    if (blink < 0f) blink = 0f;
+    if (blink > 1f) blink = 1f;
+    return presence * blink;
+}
+
+float getLagRangeSuffixMix() {
+    float presence = getLagRangeGate(lagRangeFade);
+    float blink = lagRangeSfxNoise;
+    if (blink < 0f) blink = 0f;
+    if (blink > 1f) blink = 1f;
+    return presence * blink;
+}
+
+float getLagRangeIntensity() {
+    float intensity = (lagRangeNoise - 0.4f) / 0.6f;
+    if (intensity < 0f) intensity = 0f;
+    if (intensity > 1f) intensity = 1f;
+    return intensity;
+}
+
+float getLagRangeTargetCloseness() {
+    Entity player = client.getPlayer();
+    if (player == null) return 0f;
+    if (client.allowFlying() && !client.allowEditing()) return 0f;
+    if (player.isInvisible() && !player.onGround() && client.isFlying()) return 0f;
+    if (getLagRangeButton("Disable adventure") && !client.allowEditing()) return 0f;
+
+    boolean ignoreTeammates = getLagRangeButton("Ignore teammates");
+
+    Vec3 myPosition = player.getPosition();
+    double range = getLagRangeDistance();
+    if (range <= 0) return 0f;
+    double rangeSq = range * range;
+    double closestSq = -1;
+
+    for (Entity p : world.getPlayerEntities()) {
+        if (p.isUser || p.isDead() || p.isInvisible()) continue;
+        if (ignoreTeammates && isLagRangeTeammate(player, p)) continue;
+        Vec3 position = p.getPosition();
+        if (Math.abs(position.x - myPosition.x) > range
+            || Math.abs(position.z - myPosition.z) > range
+            || Math.abs(position.y - myPosition.y) > range) continue;
+        double distanceSq = position.distanceToSq(myPosition);
+        if (distanceSq <= rangeSq && (closestSq == -1 || distanceSq < closestSq)) {
+            closestSq = distanceSq;
+        }
+    }
+
+    if (closestSq == -1) return 0f;
+    float closeness = (float) (1.0 - Math.sqrt(closestSq) / range);
+    if (closeness < 0f) closeness = 0f;
+    if (closeness > 1f) closeness = 1f;
+    return closeness;
+}
+
+boolean isLagRangeTeammate(Entity me, Entity other) {
+    String myName = util.strip(me.getName());
+    String theirName = util.strip(other.getName());
+    if (myName == null || theirName == null || myName.isEmpty()) return false;
+
+    try {
+        Map<String, List<String>> teams = world.getTeams();
+        boolean meFound = false;
+        for (String teamName : teams.keySet()) {
+            List<String> members = teams.get(teamName);
+            if (members == null || !teamContains(members, myName)) continue;
+            meFound = true;
+            if (teamContains(members, theirName)) return true;
+        }
+        if (meFound) return false;
+    } catch (Exception ignored) {}
+
+    return sharesNameColor(me, other);
+}
+
+boolean teamContains(List<String> members, String name) {
+    for (String member : members) {
+        if (member != null && util.strip(member).equalsIgnoreCase(name)) return true;
+    }
+    return false;
+}
+
+boolean sharesNameColor(Entity me, Entity other) {
+    String myName = me.getNetworkPlayer() != null
+        ? me.getNetworkPlayer().getDisplayName()
+        : me.getDisplayName();
+    if (myName == null || myName.length() < 2 || !myName.startsWith(util.colorSymbol)) return false;
+
+    String myTeam = myName.substring(0, 2);
+    String theirName = other.getDisplayName();
+    return theirName != null && theirName.startsWith(myTeam);
+}
+
+boolean getLagRangeButton(String name) {
+    try {
+        return modules.getButton("Lag Range", name);
+    } catch (Exception ignored) {
+        return false;
+    }
+}
+
+double getLagRangeDistance() {
+    if (!lagRangeRangeResolved) {
+        lagRangeRangeResolved = true;
+        try {
+            Map<String, Object> settings = modules.getSettings("Lag Range");
+            for (String key : settings.keySet()) {
+                String lo = key.toLowerCase();
+                if (lo.contains("range") || lo.contains("distance")) {
+                    lagRangeRangeSetting = key;
+                    break;
+                }
+            }
+        } catch (Exception ignored) {}
+    }
+
+    if (lagRangeRangeSetting != null) {
+        try {
+            double value = modules.getSlider("Lag Range", lagRangeRangeSetting);
+            if (value > 0) return value;
+        } catch (Exception ignored) {}
+    }
+    return 13.0;
+}
+
+int getLagRangeColor(int baseColor, float alpha) {
+    float mix = getLagRangeMix();
+    if (mix <= 0.001f) return applyAlpha(baseColor, alpha);
+    int red = lerpColor(0xFFC95555, 0xFFFF1F1F, lagRangeFade * getLagRangeIntensity());
+    return applyAlpha(lerpColor(baseColor, red, mix), alpha);
+}
+
+float getLagRangeGate(float fade) {
+    float gate = (fade - 0.05f) / 0.15f;
+    if (gate < 0f) gate = 0f;
+    if (gate > 1f) gate = 1f;
+    return gate;
 }
 
 double getWaveRatio(float seconds, long index, long now) {
