@@ -59,7 +59,7 @@ void onLoad() {
     setDataSlider("Displace", "KB Displacement", "%v1\u00B0", new String[]{"Angle"});
     setDataSlider("Timer", "Timer", "%v1x", new String[]{"Slider B"});
     setDataSlider("Hitbox", "Hit Box", "%v1x", new String[]{"Multiplier"});
-    setDataArray("KillAura", "KillAura", "Targets", new String[]{"Switch"});
+    setDataArray("KillAura", "Kill Aura", "Targets", new String[]{"Switch"});
     setDataSlider("AntiKnockback", "KB Delay", "%v1ms", new String[]{"Delay"});
     //setDataSlider("BackTrack", "Back Track", "%v1ms", new String[]{"Delay"});
     setDataSlider("FastMine", "Fast Mine", "%v1x", new String[]{"Break speed"});
@@ -67,7 +67,7 @@ void onLoad() {
     setDataArray("BedAura", "Nuker", "Break mode", new String[]{"Legit", "Instant", "Swap"});
     setDataSlider("Hit Select", "", "%v1ms", new String[]{"Pause"});
     setDataStatic("GhostHand", "Piercing", "");
-    setDataStatic("AimAssist", "Aim Assist", "Lock");
+    setDataStatic("AimAssist", "Aim Assist", "Silent");
     setDataStatic("WTap", "Sprint Reset", "NoStop");
     setDataStatic("SafeWalk", "SafeWalk", "");
     setDataStatic("Jump Reset", "Velocity", "Jump");
@@ -79,7 +79,7 @@ void onLoad() {
     setDataStatic("AutoSort", "Inv Manager", "");
     setDataStatic("JumpVelo", "Velocity", "Jump");
     setDataStatic("TimerRange", "Timer Range", "");
-    //setDataStatic("BackTrack", "Back Track", "");
+    setDataStatic("BackTrack", "Back Track", "");
     setDataStatic("Scaffold", "Scaffold Walk", "");
 
     modules.registerDescription("GPTed. by @mwisein");
@@ -94,7 +94,7 @@ void onLoad() {
     modules.registerButton("Invert gradient", false);
     modules.registerButton("Lowercase", true);
     modules.registerButton("Text shadow", true);
-    modules.registerButton("Start with {f}", true);
+    modules.registerButton("Start with {a}", true);
     modules.registerButton("Indicate lag range", false);
 }
 
@@ -218,7 +218,7 @@ void updateHudState() {
 
 void updateSliders() {
     lowercase          = modules.getButton(scriptName, "Lowercase");
-    autoStartWithF     = modules.getButton(scriptName, "Start with {f}");
+    autoStartWithF     = modules.getButton(scriptName, "Start with {a}");
     textShadow         = modules.getButton(scriptName, "Text shadow");
     animate            = modules.getButton(scriptName, "Animate");
     lineEnabled        = modules.getButton(scriptName, "Line");
@@ -722,7 +722,7 @@ int lerpColor(int c1, int c2, double t) {
 }
 
 void renderPerCharacterText(String moduleName, String nameText, String valueText, float x, float y, float scale, long baseIndex, boolean useFormatPrefix, float alpha, long now) {
-    String formatPrefix = useFormatPrefix ? "{f}" : "";
+    String formatPrefix = useFormatPrefix ? "{a}" : "";
     float currentX = x;
     long characterStep = invertGradient ? 145L : 15L;
     int visibleIndex = 0;
@@ -763,7 +763,7 @@ void renderPerCharacterText(String moduleName, String nameText, String valueText
 }
 
 float getPerCharacterTextWidth(String nameText, String valueText, boolean useFormatPrefix) {
-    String formatPrefix = useFormatPrefix ? "{f}" : "";
+    String formatPrefix = useFormatPrefix ? "{a}" : "";
     float width = 0f;
     char colorChar = util.colorSymbol.isEmpty() ? '\0' : util.colorSymbol.charAt(0);
 
@@ -786,6 +786,22 @@ float getPerCharacterTextWidth(String nameText, String valueText, boolean useFor
 
 void updateLagRangeState() {
     long now = client.time();
+    boolean indicatorSuppressed = isLagRangeIndicatorSuppressed();
+
+    if (indicatorSuppressed) {
+        lagRangeFade = 0f;
+        lagRangeFadeLast = now;
+        lagRangeNoise = 1f;
+        lagRangeNoiseTarget = 1f;
+        lagRangeNoiseHigh = true;
+        lagRangeNoiseNext = now;
+        lagRangeSfxNoise = 1f;
+        lagRangeSfxNoiseTarget = 1f;
+        lagRangeSfxNoiseHigh = true;
+        lagRangeSfxNoiseNext = now;
+        return;
+    }
+
     float targetFade = 0f;
     if (lagRangeIndicator && modules.isEnabled("Lag Range")) {
         targetFade = getLagRangeTargetCloseness();
@@ -887,63 +903,52 @@ float getLagRangeIntensity() {
 float getLagRangeTargetCloseness() {
     Entity player = client.getPlayer();
     if (player == null) return 0f;
+    if (isLagRangeIndicatorSuppressed()) return 0f;
     if (client.allowFlying() && !client.allowEditing()) return 0f;
     if (player.isInvisible() && !player.onGround() && client.isFlying()) return 0f;
-    if (getLagRangeButton("Disable adventure") && !client.allowEditing()) return 0f;
-
-    boolean ignoreTeammates = getLagRangeButton("Ignore teammates");
 
     Vec3 myPosition = player.getPosition();
     double range = getLagRangeDistance();
     if (range <= 0) return 0f;
-    double rangeSq = range * range;
-    double closestSq = -1;
 
-    for (Entity p : world.getPlayerEntities()) {
-        if (p.isUser || p.isDead() || p.isInvisible()) continue;
-        if (ignoreTeammates && isLagRangeTeammate(player, p)) continue;
-        Vec3 position = p.getPosition();
-        if (Math.abs(position.x - myPosition.x) > range
-            || Math.abs(position.z - myPosition.z) > range
-            || Math.abs(position.y - myPosition.y) > range) continue;
-        double distanceSq = position.distanceToSq(myPosition);
-        if (distanceSq <= rangeSq && (closestSq == -1 || distanceSq < closestSq)) {
-            closestSq = distanceSq;
-        }
-    }
+    Entity target = getLagRangeTarget(player, myPosition, range);
+    if (target == null) return 0f;
+    if (getLagRangeButton("Ignore teammates") && sharesNameColor(player, target)) return 0f;
 
-    if (closestSq == -1) return 0f;
-    float closeness = (float) (1.0 - Math.sqrt(closestSq) / range);
+    double distance = target.getPosition().distanceTo(myPosition);
+    float closeness = (float) (1.0 - distance / range);
     if (closeness < 0f) closeness = 0f;
     if (closeness > 1f) closeness = 1f;
     return closeness;
 }
 
-boolean isLagRangeTeammate(Entity me, Entity other) {
-    String myName = util.strip(me.getName());
-    String theirName = util.strip(other.getName());
-    if (myName == null || theirName == null || myName.isEmpty()) return false;
+Entity getLagRangeTarget(Entity player, Vec3 myPosition, double range) {
+    boolean includeInvisible = getLagRangeButton("Invisible players");
+    double rangeSq = range * range;
+    double closestSq = -1.0;
+    Entity closest = null;
 
-    try {
-        Map<String, List<String>> teams = world.getTeams();
-        boolean meFound = false;
-        for (String teamName : teams.keySet()) {
-            List<String> members = teams.get(teamName);
-            if (members == null || !teamContains(members, myName)) continue;
-            meFound = true;
-            if (teamContains(members, theirName)) return true;
+    for (Entity candidate : world.getPlayerEntities()) {
+        if (candidate.isUser || candidate.isDead()) continue;
+        if (candidate.isInvisible() && !includeInvisible) continue;
+
+        Vec3 position = candidate.getPosition();
+        if (Math.abs(position.x - myPosition.x) > range
+            || Math.abs(position.z - myPosition.z) > range
+            || Math.abs(position.y - myPosition.y) > range) continue;
+
+        double distanceSq = position.distanceToSq(myPosition);
+        if (distanceSq <= rangeSq && (closest == null || distanceSq < closestSq)) {
+            closest = candidate;
+            closestSq = distanceSq;
         }
-        if (meFound) return false;
-    } catch (Exception ignored) {}
+    }
 
-    return sharesNameColor(me, other);
+    return closest;
 }
 
-boolean teamContains(List<String> members, String name) {
-    for (String member : members) {
-        if (member != null && util.strip(member).equalsIgnoreCase(name)) return true;
-    }
-    return false;
+boolean isLagRangeIndicatorSuppressed() {
+    return getLagRangeButton("Disable adventure") && !client.allowEditing();
 }
 
 boolean sharesNameColor(Entity me, Entity other) {
