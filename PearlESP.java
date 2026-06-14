@@ -1,6 +1,14 @@
 Map<Integer, Vec3>       cachedLanding    = new HashMap<>();
+Map<Integer, Vec3>       pendingLanding   = new HashMap<>();
+Map<Integer, Integer>    landingAgreement = new HashMap<>();
+Map<Integer, Integer>    missingLandingAgreement = new HashMap<>();
 Map<Integer, List<Vec3>> cachedTrajectory = new HashMap<>();
+Map<Integer, List<Vec3>> pearlBreadcrumbs = new HashMap<>();
 Map<Integer, Float> pearlAlpha = new HashMap<>();
+Map<Integer, Vec3> predictedVelocity = new HashMap<>();
+Map<Integer, Vec3> lastPredictedPosition = new HashMap<>();
+int LANDING_CONFIRMATIONS = 3;
+int MISSING_LANDING_CONFIRMATIONS = 5;
 
 String[] themeOptions = {
     "Default","Rainbow","Aurora","Cherry","Cotton Candy",
@@ -23,15 +31,69 @@ void onLoad() {
 }
 
 void onEnable() {
-    cachedLanding.clear();
-    cachedTrajectory.clear();
-    pearlAlpha.clear();
+    resetPearls();
 }
 
 void onDisable() {
+    resetPearls();
+}
+
+void onWorldJoin(Entity entity) {
+    if (entity != null && entity.isUser) resetPearls();
+}
+
+void resetPearls() {
     cachedLanding.clear();
+    pendingLanding.clear();
+    landingAgreement.clear();
+    missingLandingAgreement.clear();
     cachedTrajectory.clear();
+    pearlBreadcrumbs.clear();
     pearlAlpha.clear();
+    predictedVelocity.clear();
+    lastPredictedPosition.clear();
+}
+
+void updateStableLanding(int id, Vec3 landing) {
+    if (landing == null) {
+        pendingLanding.remove(id);
+        landingAgreement.remove(id);
+        Integer previousMissing = missingLandingAgreement.get(id);
+        int missing = previousMissing == null ? 1 : previousMissing + 1;
+        if (missing >= MISSING_LANDING_CONFIRMATIONS) {
+            cachedLanding.remove(id);
+            missingLandingAgreement.remove(id);
+        } else {
+            missingLandingAgreement.put(id, missing);
+        }
+        return;
+    }
+
+    missingLandingAgreement.remove(id);
+
+    Vec3 displayed = cachedLanding.get(id);
+    if (displayed != null && displayed.equals(landing)) {
+        pendingLanding.remove(id);
+        landingAgreement.remove(id);
+        return;
+    }
+
+    Vec3 pending = pendingLanding.get(id);
+    int agreements = 1;
+    if (pending != null && pending.equals(landing)) {
+        Integer previous = landingAgreement.get(id);
+        agreements = (previous == null ? 1 : previous) + 1;
+    } else {
+        pendingLanding.put(id, landing);
+    }
+
+    if (agreements >= LANDING_CONFIRMATIONS) {
+        cachedLanding.put(id, landing);
+        pendingLanding.remove(id);
+        landingAgreement.remove(id);
+    } else {
+        landingAgreement.put(id, agreements);
+    }
 }
 
 
@@ -108,7 +170,8 @@ int themeColorDim(int alpha) {
 
 double DRAG    = 0.99;
 double GRAVITY = 0.03;
-int TRAJECTORY_SUBSTEPS = 8;
+int MAX_PREDICTION_TICKS = 240;
+int MAX_COLLISION_SUBSTEPS = 12;
 
 boolean isSolid(int x, int y, int z) {
     Block block = world.getBlockAt(x, y, z);
@@ -117,62 +180,131 @@ boolean isSolid(int x, int y, int z) {
     String tp = block.type == null ? "" : block.type.toLowerCase();
     if (n.contains("air") || tp.contains("air")) return false;
     if (n.equals("") || n.equals("minecraft:air")) return false;
+    if (n.contains("water") || n.contains("lava") || tp.contains("liquid")) return false;
+    if (n.contains("tallgrass") || n.contains("double_plant") || n.contains("flower")
+        || n.contains("deadbush") || n.contains("vine") || n.contains("fire")) return false;
     return true;
 }
 
-Vec3 simulateLanding(Vec3 pos, Vec3 vel) {
-    double px = pos.x, py = pos.y, pz = pos.z;
-    double vx = vel.x, vy = vel.y, vz = vel.z;
-    for (int step = 0; step < 300; step++) {
-        double sx = px, sy = py, sz = pz;
-        vx *= DRAG; vy *= DRAG; vz *= DRAG;
-        vy -= GRAVITY;
-        double nx = px+vx, ny = py+vy, nz = pz+vz;
+boolean collidesAt(double x, double y, double z) {
+    int blockX = (int)Math.floor(x);
+    int blockY = (int)Math.floor(y);
+    int blockZ = (int)Math.floor(z);
+    if (!isSolid(blockX, blockY, blockZ)) return false;
 
-        for (int sub = 1; sub <= TRAJECTORY_SUBSTEPS; sub++) {
-            double t = sub / (double) TRAJECTORY_SUBSTEPS;
-            double cx = sx + (nx - sx) * t;
-            double cy = sy + (ny - sy) * t;
-            double cz = sz + (nz - sz) * t;
-            if (isSolid((int)Math.floor(cx), (int)Math.floor(cy), (int)Math.floor(cz)))
-                return new Vec3((int)Math.floor(cx), (int)Math.floor(cy), (int)Math.floor(cz));
-            if (cy < -64) return null;
-        }
+    Block block = world.getBlockAt(blockX, blockY, blockZ);
+    if (block == null) return false;
 
-        if (ny < -64) return null;
-        px = nx; py = ny; pz = nz;
-    }
-    return null;
+    double width = block.width > 0.0 ? Math.min(1.0, block.width) : 1.0;
+    double length = block.length > 0.0 ? Math.min(1.0, block.length) : 1.0;
+    double height = block.height > 0.0 ? Math.min(1.0, block.height) : 1.0;
+    double localX = x - blockX;
+    double localY = y - blockY;
+    double localZ = z - blockZ;
+    double minX = (1.0 - width) * 0.5;
+    double minZ = (1.0 - length) * 0.5;
+
+    return localX >= minX && localX <= minX + width
+        && localY >= 0.0 && localY <= height
+        && localZ >= minZ && localZ <= minZ + length;
 }
 
-List<Vec3> buildTrajectory(Vec3 pos, Vec3 vel) {
+boolean isWaterAt(Vec3 position) {
+    Block block = world.getBlockAt(
+        (int)Math.floor(position.x),
+        (int)Math.floor(position.y),
+        (int)Math.floor(position.z)
+    );
+    if (block == null) return false;
+    String name = block.name == null ? "" : block.name.toLowerCase();
+    String type = block.type == null ? "" : block.type.toLowerCase();
+    return name.contains("water") || type.contains("water");
+}
+
+Vec3 advancePearlVelocity(Vec3 velocity, Vec3 position) {
+    double drag = isWaterAt(position) ? 0.8 : DRAG;
+    return new Vec3(
+        velocity.x * drag,
+        velocity.y * drag - GRAVITY,
+        velocity.z * drag
+    );
+}
+
+Object[] predictTrajectory(Vec3 pos, Vec3 vel) {
     List<Vec3> pts = new ArrayList<>();
     double px = pos.x, py = pos.y, pz = pos.z;
     double vx = vel.x, vy = vel.y, vz = vel.z;
     pts.add(new Vec3(px, py, pz));
-    for (int step = 0; step < 300; step++) {
-        double sx = px, sy = py, sz = pz;
-        vx *= DRAG; vy *= DRAG; vz *= DRAG;
-        vy -= GRAVITY;
-        double nx = px+vx, ny = py+vy, nz = pz+vz;
 
-        for (int sub = 1; sub <= TRAJECTORY_SUBSTEPS; sub++) {
-            double t = sub / (double) TRAJECTORY_SUBSTEPS;
+    for (int step = 0; step < MAX_PREDICTION_TICKS; step++) {
+        double sx = px, sy = py, sz = pz;
+        double nx = px + vx, ny = py + vy, nz = pz + vz;
+        double largestAxis = Math.max(Math.abs(vx), Math.max(Math.abs(vy), Math.abs(vz)));
+        int substeps = Math.max(2, Math.min(MAX_COLLISION_SUBSTEPS, (int)Math.ceil(largestAxis / 0.18)));
+
+        for (int sub = 1; sub <= substeps; sub++) {
+            double t = sub / (double) substeps;
             double cx = sx + (nx - sx) * t;
             double cy = sy + (ny - sy) * t;
             double cz = sz + (nz - sz) * t;
-
             pts.add(new Vec3(cx, cy, cz));
-            if (isSolid((int)Math.floor(cx), (int)Math.floor(cy), (int)Math.floor(cz))) {
-                return pts;
+            if (collidesAt(cx, cy, cz)) {
+                Vec3 landing = new Vec3(
+                    (int)Math.floor(cx),
+                    (int)Math.floor(cy),
+                    (int)Math.floor(cz)
+                );
+                return new Object[]{landing, pts};
             }
-            if (cy < -64) return pts;
+            if (cy < -64) return new Object[]{null, pts};
         }
 
-        if (ny < -64) break;
         px = nx; py = ny; pz = nz;
+        double drag = isWaterAt(new Vec3(px, py, pz)) ? 0.8 : DRAG;
+        vx *= drag;
+        vy = vy * drag - GRAVITY;
+        vz *= drag;
+        if (ny < -64) return new Object[]{null, pts};
     }
-    return pts;
+    return new Object[]{null, pts};
+}
+
+void appendBreadcrumb(int id, Vec3 previous, Vec3 current) {
+    List<Vec3> breadcrumbs = pearlBreadcrumbs.get(id);
+    if (breadcrumbs == null) {
+        breadcrumbs = new ArrayList<>();
+        pearlBreadcrumbs.put(id, breadcrumbs);
+        breadcrumbs.add(new Vec3(previous.x, previous.y, previous.z));
+    }
+
+    Vec3 lastPoint = breadcrumbs.get(breadcrumbs.size() - 1);
+    double dx = current.x - lastPoint.x;
+    double dy = current.y - lastPoint.y;
+    double dz = current.z - lastPoint.z;
+    double distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    if (distance < 0.001) return;
+
+    int segments = Math.max(1, Math.min(12, (int)Math.ceil(distance / 0.12)));
+    for (int i = 1; i <= segments; i++) {
+        double t = i / (double)segments;
+        breadcrumbs.add(new Vec3(
+            lastPoint.x + dx * t,
+            lastPoint.y + dy * t,
+            lastPoint.z + dz * t
+        ));
+    }
+}
+
+List<Vec3> combineTrajectory(int id, List<Vec3> prediction) {
+    List<Vec3> combined = new ArrayList<>();
+    List<Vec3> breadcrumbs = pearlBreadcrumbs.get(id);
+    if (breadcrumbs != null) combined.addAll(breadcrumbs);
+
+    int start = combined.isEmpty() ? 0 : 1;
+    for (int i = start; i < prediction.size(); i++) {
+        combined.add(prediction.get(i));
+    }
+    return combined;
 }
 
 void drawSmoothTrajectory(List<Vec3> pts, float lineWidth, float alpha) {
@@ -234,28 +366,70 @@ void onPreUpdate() {
         alpha = Math.min(1.0f, alpha + 0.12f);
         pearlAlpha.put(id, alpha);
 
-        if (cachedLanding.containsKey(id)) continue;
         if (e.getTicksExisted() < 2) continue;
 
         Vec3 last = e.getLastPosition();
-        Vec3 vel = new Vec3(pos.x - last.x, pos.y - last.y, pos.z - last.z);
-        double speed = Math.sqrt(vel.x*vel.x + vel.y*vel.y + vel.z*vel.z);
+        appendBreadcrumb(id, last, pos);
+        Vec3 observedVelocity = new Vec3(pos.x - last.x, pos.y - last.y, pos.z - last.z);
+        double speed = Math.sqrt(
+            observedVelocity.x * observedVelocity.x
+            + observedVelocity.y * observedVelocity.y
+            + observedVelocity.z * observedVelocity.z
+        );
         if (speed < 0.01) continue;
 
-        Vec3 landing = simulateLanding(pos, vel);
-        if (landing == null) continue;
+        Vec3 previousPosition = lastPredictedPosition.get(id);
+        if (previousPosition != null && previousPosition.distanceToSq(pos) < 0.00000001) continue;
 
-        cachedLanding.put(id, landing);
-        cachedTrajectory.put(id, buildTrajectory(pos, vel));
+        Vec3 nextVelocity = advancePearlVelocity(observedVelocity, pos);
+        Vec3 previousVelocity = predictedVelocity.get(id);
+        if (previousVelocity != null) {
+            Vec3 expectedVelocity = advancePearlVelocity(previousVelocity, pos);
+            double errorX = nextVelocity.x - expectedVelocity.x;
+            double errorY = nextVelocity.y - expectedVelocity.y;
+            double errorZ = nextVelocity.z - expectedVelocity.z;
+            double errorSq = errorX * errorX + errorY * errorY + errorZ * errorZ;
+
+            if (errorSq < 0.09) {
+                nextVelocity = new Vec3(
+                    nextVelocity.x * 0.82 + expectedVelocity.x * 0.18,
+                    nextVelocity.y * 0.82 + expectedVelocity.y * 0.18,
+                    nextVelocity.z * 0.82 + expectedVelocity.z * 0.18
+                );
+            }
+        }
+
+        Object[] prediction = predictTrajectory(pos, nextVelocity);
+        Vec3 landing = (Vec3) prediction[0];
+        List<Vec3> trajectory = (List<Vec3>) prediction[1];
+
+        predictedVelocity.put(id, nextVelocity);
+        lastPredictedPosition.put(id, pos);
+        cachedTrajectory.put(id, combineTrajectory(id, trajectory));
+
+        updateStableLanding(id, landing);
     }
 
-    for (Integer id : cachedLanding.keySet()) {
-        if (!live.contains(id)) remove.add(id);
+    for (Integer id : pearlBreadcrumbs.keySet()) {
+        if (live.contains(id)) continue;
+        Float alpha = pearlAlpha.get(id);
+        float faded = (alpha == null ? 1.0f : alpha) - 0.14f;
+        if (faded <= 0.0f) {
+            remove.add(id);
+        } else {
+            pearlAlpha.put(id, faded);
+        }
     }
     for (Integer id : remove) {
         cachedLanding.remove(id);
+        pendingLanding.remove(id);
+        landingAgreement.remove(id);
+        missingLandingAgreement.remove(id);
         cachedTrajectory.remove(id);
+        pearlBreadcrumbs.remove(id);
         pearlAlpha.remove(id);
+        predictedVelocity.remove(id);
+        lastPredictedPosition.remove(id);
     }
 }
 
@@ -265,13 +439,11 @@ void onRenderWorld(float partialTicks) {
     boolean showTrail = modules.getButton(scriptName, "Trajectory line");
     float lineWidth = (float) modules.getSlider(scriptName, "Line width");
 
-    for (Integer id : cachedLanding.keySet()) {
+    for (Integer id : cachedTrajectory.keySet()) {
         Vec3 landing = cachedLanding.get(id);
-        if (landing == null) continue;
 
         Float rawAlpha = pearlAlpha.get(id);
         float fa = rawAlpha != null ? rawAlpha : 1.0f;
-        int a255 = (int)(fa * 255);
 
         int colBlock = themeColor((int)(fa * 180));
         int colShade = themeColorDim((int)(fa * 60));
@@ -281,11 +453,11 @@ void onRenderWorld(float partialTicks) {
             drawSmoothTrajectory(pts, lineWidth, fa);
         }
 
-        if (showBlock) {
+        if (landing != null && showBlock) {
             render.block(landing, colBlock, true, false);
         }
 
-        if (showShade) {
+        if (landing != null && showShade) {
             render.block(landing, colShade, false, true);
         }
     }
