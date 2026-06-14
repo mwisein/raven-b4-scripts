@@ -12,6 +12,7 @@ void onLoad() {
     modules.registerDescription("Other");
     modules.registerSlider("Transition Speed", "ms", 2100, 100, 5000, 100);
     modules.registerSlider("Alpha", "", 36, 0, 255, 1);
+    modules.registerButton("Outline", false);
     modules.registerButton("Team Colour", false);
     loadTeamColours();
 }
@@ -132,10 +133,36 @@ void drawEntityShade(Entity entity, float partialTicks, int color) {
     vertexBoxFace(x1, y1, z1, x2, y2, z2, 5);
     gl.end();
 
+    if (modules.getButton(scriptName, "Outline")) {
+        float red = ((color >>> 16) & 0xFF) / 255.0f;
+        float green = ((color >>> 8) & 0xFF) / 255.0f;
+        float blue = (color & 0xFF) / 255.0f;
+
+        gl.lineSmooth(true);
+        gl.lineWidth(2.0f);
+        gl.color(red, green, blue, 0.95f);
+        gl.begin(1);
+        gl.vertex3(x1,y1,z1); gl.vertex3(x2,y1,z1);
+        gl.vertex3(x2,y1,z1); gl.vertex3(x2,y1,z2);
+        gl.vertex3(x2,y1,z2); gl.vertex3(x1,y1,z2);
+        gl.vertex3(x1,y1,z2); gl.vertex3(x1,y1,z1);
+        gl.vertex3(x1,y2,z1); gl.vertex3(x2,y2,z1);
+        gl.vertex3(x2,y2,z1); gl.vertex3(x2,y2,z2);
+        gl.vertex3(x2,y2,z2); gl.vertex3(x1,y2,z2);
+        gl.vertex3(x1,y2,z2); gl.vertex3(x1,y2,z1);
+        gl.vertex3(x1,y1,z1); gl.vertex3(x1,y2,z1);
+        gl.vertex3(x2,y1,z1); gl.vertex3(x2,y2,z1);
+        gl.vertex3(x2,y1,z2); gl.vertex3(x2,y2,z2);
+        gl.vertex3(x1,y1,z2); gl.vertex3(x1,y2,z2);
+        gl.end();
+        gl.lineWidth(1.0f);
+        gl.lineSmooth(false);
+    }
+
     gl.depthMask(true);
     gl.depth(true);
     gl.cull(true);
-    gl.lighting(true);
+    gl.lighting(false);
     gl.texture2d(true);
     gl.alpha(true);
     gl.blend(false);
