@@ -8,6 +8,7 @@ String selectedTheme = "white";
 String selectedHighlightTheme = "white";
 boolean shortenLine = true;
 boolean highlightEntities = true;
+boolean onlyOnHighlightable = false;
 
 String[] themeOptions = {
     "Default","Rainbow","Aurora","Cherry","Cotton Candy",
@@ -24,8 +25,9 @@ void onLoad() {
     modules.registerDescription("Fireball trajectories.");
     modules.registerSlider("Theme", "", 0, themeOptions);
     modules.registerSlider("Highlight Theme", "", 0, themeOptions);
-    modules.registerButton("Shorten Line",      true);
-    modules.registerButton("Highlight Entity",  true);
+    modules.registerButton("Shorten line",      true);
+    modules.registerButton("Highlight entity",  true);
+    modules.registerButton("Only on highlightable", false);
     rebuildHighlightedBlocks();
 }
 
@@ -41,8 +43,9 @@ void onPreUpdate() {
 void refreshSettings() {
     selectedTheme = resolveTheme();
     selectedHighlightTheme = resolveHighlightTheme();
-    shortenLine = modules.getButton(scriptName, "Shorten Line");
-    highlightEntities = modules.getButton(scriptName, "Highlight Entity");
+    shortenLine = modules.getButton(scriptName, "Shorten line");
+    highlightEntities = modules.getButton(scriptName, "Highlight entity");
+    onlyOnHighlightable = modules.getButton(scriptName, "Only on highlightable");
 }
 
 void rebuildHighlightedBlocks() {
@@ -147,7 +150,11 @@ void onRenderWorld(float partialTicks) {
         endZ = eyeZ + dirZ * range;
     }
 
-    boolean highlightedTarget = hitType == 1 || (hitType == 2 && blockWhitelisted);
+    boolean entityHighlightable = hitType == 1 && hitEntity != null && highlightEntities;
+    boolean blockHighlightable = hitType == 2 && blockWhitelisted;
+    boolean highlightedTarget = entityHighlightable || blockHighlightable;
+    if (onlyOnHighlightable && !highlightedTarget) return;
+
     int themeColor = getThemeColor(selectedTheme);
     int highlightColor = highlightedTarget ? getThemeColor(selectedHighlightTheme) : themeColor;
     int activeColor = highlightedTarget ? highlightColor : themeColor;
@@ -179,24 +186,10 @@ void onRenderWorld(float partialTicks) {
         drawHighlightedEntity(hitEntity, partialTicks, highlightColor);
     }
 
-    if (hitType > 0) {
-        double lx, ly, lz;
-        String landingSide = blockSide;
-        if (hitType == 1 && hitEntity != null) {
-            Vec3 ePos = hitEntity.getPosition();
-            Vec3 eLast = hitEntity.getLastPosition();
-            lx = eLast.x + (ePos.x - eLast.x) * partialTicks;
-            ly = eLast.y + (ePos.y - eLast.y) * partialTicks + hitEntity.getHeight() * 0.5;
-            lz = eLast.z + (ePos.z - eLast.z) * partialTicks;
-            landingSide = "UP";
-        } else {
-            lx = endX;
-            ly = endY;
-            lz = endZ;
-        }
-        drawLanding(lx, ly, lz, landingSide, r, g, b, cam);
+    if (hitType == 2) {
+        drawLanding(endX, endY, endZ, blockSide, r, g, b, cam);
 
-        if (hitType == 2 && blockWhitelisted && hitBlockPosition != null) {
+        if (blockWhitelisted && hitBlockPosition != null) {
             render.block(hitBlockPosition, withAlpha(highlightColor, 36), false, true);
             render.block(hitBlockPosition, withAlpha(highlightColor, 255), true, false);
         }
