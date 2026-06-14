@@ -94,7 +94,7 @@ void onLoad() {
     modules.registerButton("Invert gradient", false);
     modules.registerButton("Lowercase", true);
     modules.registerButton("Text shadow", true);
-    modules.registerButton("Start with {a}", true);
+    modules.registerButton("Start with {f}", true);
     modules.registerButton("Indicate lag range", false);
 }
 
@@ -218,7 +218,7 @@ void updateHudState() {
 
 void updateSliders() {
     lowercase          = modules.getButton(scriptName, "Lowercase");
-    autoStartWithF     = modules.getButton(scriptName, "Start with {a}");
+    autoStartWithF     = modules.getButton(scriptName, "Start with {f}");
     textShadow         = modules.getButton(scriptName, "Text shadow");
     animate            = modules.getButton(scriptName, "Animate");
     lineEnabled        = modules.getButton(scriptName, "Line");
@@ -722,7 +722,7 @@ int lerpColor(int c1, int c2, double t) {
 }
 
 void renderPerCharacterText(String moduleName, String nameText, String valueText, float x, float y, float scale, long baseIndex, boolean useFormatPrefix, float alpha, long now) {
-    String formatPrefix = useFormatPrefix ? "{a}" : "";
+    String formatPrefix = useFormatPrefix ? "{f}" : "";
     float currentX = x;
     long characterStep = invertGradient ? 145L : 15L;
     int visibleIndex = 0;
@@ -763,7 +763,7 @@ void renderPerCharacterText(String moduleName, String nameText, String valueText
 }
 
 float getPerCharacterTextWidth(String nameText, String valueText, boolean useFormatPrefix) {
-    String formatPrefix = useFormatPrefix ? "{a}" : "";
+    String formatPrefix = useFormatPrefix ? "{f}" : "";
     float width = 0f;
     char colorChar = util.colorSymbol.isEmpty() ? '\0' : util.colorSymbol.charAt(0);
 
