@@ -165,14 +165,14 @@ void pushNotification(String text, boolean enabled) {
     notification.put("text", text);
     notification.put("enabled", Boolean.valueOf(enabled));
     notification.put("created", Long.valueOf(client.time()));
-    notifications.add(0, notification);
+    notifications.add(notification);
 
     int openCount = 0;
     for (int i = 0; i < notifications.size(); i++) {
         if (!isNotificationClosing(notifications.get(i))) openCount++;
     }
 
-    for (int i = notifications.size() - 1; openCount > 7 && i >= 0; i--) {
+    for (int i = 0; openCount > 7 && i < notifications.size(); i++) {
         Map<String, Object> oldest = notifications.get(i);
         if (!isNotificationClosing(oldest)) {
             startNotificationClose(oldest);
