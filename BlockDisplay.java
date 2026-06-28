@@ -40,6 +40,7 @@ long switchFadeMs = 110L;
 void onLoad() {
     modules.registerDescription("Displays block count.");
     modules.registerButton("Scaffold only", false);
+    modules.registerButton("Disable ladders", false);
     modules.registerSlider("Theme", "", 0, themeOptions);
     modules.registerSlider("Scale", "x", 1.0, 0.5, 3.0, 0.1);
     modules.registerSlider("Only on RMB", "", 0, rmbOptions);
@@ -238,6 +239,19 @@ boolean isScaffoldEnabled() {
     return false;
 }
 
+boolean isHeldLadder(ItemStack held) {
+    if (held == null || held.name == null) return false;
+    return held.name.toLowerCase().contains("ladder");
+}
+
+boolean passesLadderSetting(ItemStack held) {
+    try {
+        return !modules.getButton(scriptName, "Disable ladders") || !isHeldLadder(held);
+    } catch (Exception ignored) {
+    }
+    return true;
+}
+
 int getHotbarBlockTotal() {
     int total = 0;
     for (int slot = 0; slot < 9; slot++) {
@@ -281,6 +295,7 @@ void onRenderTick(float partialTicks) {
                     && held.name != null
                     && held.maxStackSize > 1
                     && held.stackSize > 0
+                    && passesLadderSetting(held)
                     && passesScaffoldOnly()
                     && passesRmbMode();
 
